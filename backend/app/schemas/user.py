@@ -12,6 +12,7 @@ class UserUpdate(BaseModel):
     name: str | None = None
     email: EmailStr | None = None
     timezone: str | None = None
+    department: str | None = None
 
 
 class UserResponse(BaseModel):
@@ -19,6 +20,7 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     timezone: str
+    department: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

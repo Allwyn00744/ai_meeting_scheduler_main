@@ -49,6 +49,7 @@ from app.services.meeting_notification_service import (
     MeetingNotificationService,
 )
 from app.services.outlook_calendar_service import OutlookCalendarService
+from app.services.push_notification_service import PushNotificationService
 from app.services.slack_notification_service import SlackNotificationService
 from app.services.teams_meeting_service import TeamsMeetingService
 from app.services.zoom_calendar_service import ZoomCalendarService
@@ -695,13 +696,33 @@ class SchedulerService:
         # invitations above, not a modification of them. Sends one
         # owner DM per created occurrence, using each occurrence's own
         # start/end time. Best-effort, never raises.
+        #
+        # Push Notifications V1 - independent sibling to Slack above.
+        # This was missing entirely: MeetingService.create_meeting (the
+        # plain POST /meetings path) has always called
+        # PushNotificationService.notify_meeting_created, but this
+        # scheduler path (POST /scheduler/schedule, what the actual
+        # "Create Meeting" UI calls) never did - so push worked for
+        # every other event (update/cancel always go through
+        # MeetingService) but never fired right after creation here.
+        # Best-effort, never raises.
         for created_meeting_id in created_meetings:
             created_meeting = MeetingRepository.get_by_id(
                 db,
                 created_meeting_id,
             )
             if created_meeting is not None:
+                logger.info(
+                    "Meeting created (scheduler path): meeting_id=%s "
+                    "owner_id=%s - notifying Slack and Push.",
+                    created_meeting.id,
+                    created_meeting.owner_id,
+                )
                 SlackNotificationService.notify_meeting_created(
+                    db,
+                    created_meeting,
+                )
+                PushNotificationService.notify_meeting_created(
                     db,
                     created_meeting,
                 )

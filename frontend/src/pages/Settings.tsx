@@ -5,6 +5,7 @@ import { Bell, Calendar, CheckCircle2, Hash, MailWarning, MessageCircle, Users, 
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
+import { Switch } from "@/components/ui/Switch";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
@@ -52,16 +53,18 @@ export default function Settings() {
   const [name, setName] = React.useState(user?.name ?? "");
   const [email, setEmail] = React.useState(user?.email ?? "");
   const [timezone, setTimezone] = React.useState(user?.timezone ?? "UTC");
+  const [department, setDepartment] = React.useState(user?.department ?? "");
   React.useEffect(() => {
     if (user) {
       setName(user.name);
       setEmail(user.email);
       setTimezone(user.timezone);
+      setDepartment(user.department ?? "");
     }
   }, [user]);
 
   const saveProfile = useMutation({
-    mutationFn: () => usersApi.update(user!.id, { name, email, timezone }),
+    mutationFn: () => usersApi.update(user!.id, { name, email, timezone, department }),
     onSuccess: async () => {
       await refetchUser();
       push("success", "Profile updated");
@@ -260,6 +263,14 @@ export default function Settings() {
     },
     onError: (err) => push("error", "Couldn't save WhatsApp settings", getApiErrorMessage(err)),
   });
+  const toggleWhatsapp = useMutation({
+    mutationFn: (isEnabled: boolean) => whatsappApi.updateSettings({ is_enabled: isEnabled }),
+    onSuccess: (data) => {
+      push("success", data.enabled ? "WhatsApp notifications enabled" : "WhatsApp notifications disabled");
+      refetchWhatsapp();
+    },
+    onError: (err) => push("error", "Couldn't update WhatsApp notifications", getApiErrorMessage(err)),
+  });
   const testWhatsapp = useMutation({
     mutationFn: whatsappApi.sendTest,
     onSuccess: () => push("success", "Test notification sent", "Check your WhatsApp messages."),
@@ -357,14 +368,29 @@ export default function Settings() {
               <Input value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
           </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">Timezone</label>
-            <Select value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-              <option value="UTC">UTC</option>
-              <option value="Asia/Kolkata">Asia/Kolkata (UTC+5:30)</option>
-              <option value="America/New_York">America/New_York (UTC-5:00)</option>
-              <option value="Europe/London">Europe/London (UTC+0:00)</option>
-            </Select>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Timezone</label>
+              <Select value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+                <option value="UTC">UTC</option>
+                <option value="Asia/Kolkata">Asia/Kolkata (UTC+5:30)</option>
+                <option value="America/New_York">America/New_York (UTC-5:00)</option>
+                <option value="Europe/London">Europe/London (UTC+0:00)</option>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Department <span className="font-normal text-slate-400">(optional)</span>
+              </label>
+              <Input
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+                placeholder="e.g. Engineering"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Used only for aggregate, non-identifying Team Analytics (department-level meeting counts).
+              </p>
+            </div>
           </div>
           <div className="flex justify-end">
             <Button onClick={() => saveProfile.mutate()} loading={saveProfile.isPending}>
@@ -628,6 +654,19 @@ export default function Settings() {
               }}
               placeholder="+14155552671"
               error={whatsappPhoneError}
+            />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5">
+            <div>
+              <p className="text-sm font-medium text-slate-700">Notify me on WhatsApp</p>
+              <p className="text-xs text-slate-500">
+                Sent when a meeting you own is created, updated, or cancelled.
+              </p>
+            </div>
+            <Switch
+              checked={!!whatsappStatus?.enabled}
+              disabled={!whatsappStatus?.phone_number || toggleWhatsapp.isPending}
+              onCheckedChange={(v) => toggleWhatsapp.mutate(v)}
             />
           </div>
           <div className="flex justify-end gap-2">

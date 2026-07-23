@@ -38,6 +38,13 @@ class MeetingUpdate(BaseModel):
     end_time: datetime | None = None
     location: str | None = None
     status: str | None = None
+    # Added for Recurring Meetings V1's "edit this and following"
+    # (MeetingSeriesService.update_series_from), which needs to
+    # reassign a resource the same way it can already change
+    # title/description/location - no extra validation here, matching
+    # every other field on this schema (a plain PUT already lets you
+    # change start_time/end_time with no conflict recheck either).
+    resource_id: int | None = None
 
     @model_validator(mode="after")
     def check_time_order(self):
@@ -73,5 +80,9 @@ class MeetingResponse(BaseModel):
     zoom_join_url: str | None = None
     zoom_start_url: str | None = None
     teams_join_url: str | None = None
+
+    # Recurring Meetings V1 - both None for a normal, one-off meeting.
+    series_id: int | None = None
+    series_sequence: int | None = None
 
     model_config = ConfigDict(from_attributes=True)

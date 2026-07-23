@@ -24,7 +24,10 @@ class MeetingRepository:
     ):
         query = (
             db.query(Meeting)
-            .filter(Meeting.owner_id == owner_id)
+            .filter(
+                Meeting.owner_id == owner_id,
+                Meeting.status != "cancelled",
+            )
             .order_by(Meeting.start_time.desc())
         )
 
@@ -61,11 +64,17 @@ class MeetingRepository:
         Returns the complete, unpaginated set of meetings owned by a
         user. Used for conflict/availability checks, which must see
         every meeting to be correct — this method must never be
-        paginated.
+        paginated. Excludes cancelled meetings: since
+        MeetingService.delete_meeting soft-deletes (status="cancelled")
+        rather than removing the row, a cancelled meeting must not
+        keep blocking its old slot.
         """
         return (
             db.query(Meeting)
-            .filter(Meeting.owner_id == owner_id)
+            .filter(
+                Meeting.owner_id == owner_id,
+                Meeting.status != "cancelled",
+            )
             .all()
         )
 
@@ -81,6 +90,7 @@ class MeetingRepository:
             db.query(Meeting)
             .filter(
                 Meeting.owner_id == owner_id,
+                Meeting.status != "cancelled",
                 or_(
                     Meeting.title.ilike(f"%{keyword}%"),
                     Meeting.description.ilike(f"%{keyword}%"),
@@ -128,6 +138,7 @@ class MeetingRepository:
             db.query(Meeting)
             .filter(
                 Meeting.owner_id == owner_id,
+                Meeting.status != "cancelled",
                 func.date(Meeting.start_time) == meeting_date,
             )
             .order_by(Meeting.start_time.desc())
@@ -151,6 +162,7 @@ class MeetingRepository:
             db.query(Meeting)
             .filter(
                 Meeting.owner_id == owner_id,
+                Meeting.status != "cancelled",
                 func.date(Meeting.start_time) >= start_date,
                 func.date(Meeting.start_time) <= end_date,
             )
@@ -171,12 +183,14 @@ class MeetingRepository:
     ):
         """
         Used for conflict detection during scheduling/suggestion —
-        must never be paginated.
+        must never be paginated. Excludes cancelled meetings so a
+        cancelled slot is correctly treated as free (see get_user_meetings).
         """
         return (
             db.query(Meeting)
             .filter(
                 Meeting.owner_id == owner_id,
+                Meeting.status != "cancelled",
                 Meeting.start_time < end_time,
                 Meeting.end_time > start_time,
             )
@@ -192,12 +206,14 @@ class MeetingRepository:
     ):
         """
         Used for resource conflict detection during scheduling — must
-        never be paginated.
+        never be paginated. Excludes cancelled meetings so a cancelled
+        booking is correctly treated as freeing the resource.
         """
         return (
             db.query(Meeting)
             .filter(
                 Meeting.resource_id == resource_id,
+                Meeting.status != "cancelled",
                 Meeting.start_time < end_time,
                 Meeting.end_time > start_time,
             )

@@ -24,3 +24,7 @@ from app.models.slack_credential import SlackCredential
 from app.models.slack_oauth_state import SlackOAuthState
 from app.models.whatsapp_settings import WhatsAppSettings
 from app.models.push_subscription import PushSubscription
+from app.models.meeting_reschedule_history import MeetingRescheduleHistory
+from app.models.notification_log import NotificationLog
+from app.models.google_login_oauth_state import GoogleLoginOAuthState
+from app.models.meeting_series import MeetingSeries

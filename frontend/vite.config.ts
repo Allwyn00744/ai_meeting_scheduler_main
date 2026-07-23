@@ -33,6 +33,8 @@ export default defineConfig({
       "/ai": "http://localhost:8000",
       "/action-items": "http://localhost:8000",
       "/meeting-intelligence": "http://localhost:8000",
+      "/meeting-series": "http://localhost:8000",
+      "/ws": { target: "ws://localhost:8000", ws: true },
     },
   },
 });

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +40,15 @@ class Settings(BaseSettings):
     # finishes (success or error) - the frontend's Settings page, not
     # this API. Never include a trailing slash.
     FRONTEND_URL: str = "http://localhost:5173"
+
+    # "Sign in with Google" login (app/auth/google_login_oauth.py) -
+    # deliberately separate from GOOGLE_REDIRECT_URI above, which is
+    # the existing Google *Calendar* connect flow (calendar.events
+    # scope only, tied to an already-logged-in user). This is a
+    # different callback path with different scopes (openid email
+    # profile) for an anonymous sign-in flow, so it needs its own
+    # registered redirect URI on the same Google Cloud OAuth client.
+    GOOGLE_LOGIN_REDIRECT_URI: str = "http://localhost:8000/auth/google/callback"
 
     # Microsoft OAuth (Outlook Calendar)
     # Optional, like GEMINI_API_KEY below: /outlook endpoints return 503
@@ -102,6 +113,27 @@ class Settings(BaseSettings):
     # for long before falling back to PostgreSQL.
     REDIS_SOCKET_TIMEOUT_SECONDS: float = 2.0
     REDIS_CONNECT_TIMEOUT_SECONDS: float = 2.0
+
+    # Rate limiting (slowapi). Applied only to the brute-force-prone
+    # auth endpoints (login/register/Google login) - see
+    # app/core/rate_limit.py. Backed by Redis (shared across worker
+    # processes) when REDIS_URL is set, otherwise an in-memory store
+    # scoped to a single process - a safe default for local dev, not
+    # a correct multi-worker production limit, but never a startup
+    # failure mode either.
+    AUTH_RATE_LIMIT: str = "5/minute"
+
+    # Logging (app/core/logging_config.py). LOG_FORMAT="json" emits
+    # one structured JSON object per log line (safe for log
+    # aggregation/parsing); "text" is the more readable default for
+    # local development.
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "text"
+
+    # Informational only - surfaced in logs and GET /health so it's
+    # obvious at a glance which environment a given process/log line
+    # came from. Does not itself change any application behavior.
+    ENVIRONMENT: str = "development"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -242,4 +274,42 @@ class Settings(BaseSettings):
         )
 
 
-settings = Settings()
+def _load_settings() -> Settings:
+    """
+    Settings() already fails fast on import (Pydantic raises
+    immediately if a required field like DATABASE_URL/SECRET_KEY is
+    missing) - this wrapper only makes that failure legible. Pydantic's
+    own ValidationError is accurate but dense (stack trace, internal
+    type info, a docs URL per field); this catches it and re-raises a
+    short, actionable message naming exactly which environment
+    variables are missing and where to find them, then exits with a
+    non-zero status so a container/process manager treats it as a
+    startup failure rather than retrying into the same error forever.
+    """
+    try:
+        return Settings()
+    except ValidationError as exc:
+        missing = [
+            ".".join(str(part) for part in error["loc"])
+            for error in exc.errors()
+            if error["type"] == "missing"
+        ]
+
+        if missing:
+            message = (
+                "Missing required environment variable(s): "
+                f"{', '.join(missing)}. Set these in backend/.env "
+                "(see backend/.env.example for every variable this "
+                "application reads, and which ones are required)."
+            )
+        else:
+            message = (
+                "Invalid application configuration - see details "
+                f"below. Check backend/.env against backend/.env.example.\n{exc}"
+            )
+
+        print(f"FATAL: {message}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+settings = _load_settings()

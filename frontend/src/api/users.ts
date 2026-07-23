@@ -5,6 +5,7 @@ export interface UserUpdatePayload {
   name?: string;
   email?: string;
   timezone?: string;
+  department?: string;
 }
 
 export const usersApi = {

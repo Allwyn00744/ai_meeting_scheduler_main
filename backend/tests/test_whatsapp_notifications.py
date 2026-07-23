@@ -167,7 +167,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
         """
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ):
             return self._create_meeting(headers=headers)
 
@@ -190,7 +190,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             self._create_meeting()
 
@@ -246,7 +246,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             resp = self.client.put(
                 f"/meetings/{meeting_id}",
@@ -266,7 +266,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             resp = self.client.delete(
                 f"/meetings/{meeting_id}",
@@ -312,7 +312,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             response = self.client.post(
                 f"/whatsapp/send/{meeting_id}",
@@ -329,7 +329,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             response = self.client.post(
                 f"/whatsapp/send/{meeting_id}",
@@ -370,7 +370,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=False,
+            return_value=(False, None),
         ):
             response = self.client.post(
                 f"/whatsapp/send/{meeting_id}",
@@ -385,7 +385,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             self.client.post(
                 f"/whatsapp/send/{meeting_id}",
@@ -412,7 +412,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             response = self.client.post(
                 "/whatsapp/test",
@@ -435,7 +435,7 @@ class WhatsAppNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.whatsapp_notification_service.WhatsAppClient.send_text_message",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             meeting_id = self._create_meeting()
 

@@ -42,7 +42,31 @@ export function usePushNotifications() {
     try {
       const registration = await navigator.serviceWorker.register("/sw.js");
       const existing = await registration.pushManager.getSubscription();
-      setSubscribed(existing !== null);
+
+      if (existing === null) {
+        setSubscribed(false);
+        return;
+      }
+
+      // A browser-side subscription existing is not proof the backend
+      // can actually deliver to it - e.g. a prior POST /push/subscribe
+      // call failed after the browser already created its local
+      // subscription, or the row was since removed. Re-registering
+      // here is idempotent (PushSubscriptionRepository.get_by_endpoint
+      // updates the existing row rather than duplicating it) and
+      // self-heals that mismatch instead of reporting "Subscribed"
+      // for an account the backend has nothing on file for.
+      const json = existing.toJSON();
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+        setSubscribed(false);
+        return;
+      }
+
+      await pushApi.subscribe({
+        endpoint: json.endpoint,
+        keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+      });
+      setSubscribed(true);
     } catch {
       setSubscribed(false);
     } finally {

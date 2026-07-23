@@ -16,6 +16,11 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   redis:
     image: redis:7-alpine
@@ -26,6 +31,11 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   backend:
     build:
@@ -48,6 +58,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   frontend:
     build:
@@ -58,7 +73,13 @@ services:
     ports:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
 
 volumes:
   postgres_data:

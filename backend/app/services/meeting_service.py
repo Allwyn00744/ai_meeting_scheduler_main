@@ -3,10 +3,11 @@ import logging
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from datetime import date
+from datetime import date, datetime, timezone
 
 from app.core.cache import (
     MEETINGS_LIST_TTL_SECONDS,
+    analytics_prefix,
     cache_delete,
     cache_get,
     cache_set,
@@ -17,6 +18,7 @@ from app.core.cache import (
 )
 from app.models.external_meeting_guest import ExternalMeetingGuest
 from app.models.meeting import Meeting
+from app.models.resource import Resource
 from app.models.user import User
 from app.repositories.external_meeting_guest_repository import (
     ExternalMeetingGuestRepository,
@@ -25,7 +27,9 @@ from app.repositories.meeting_participant_repository import (
     MeetingParticipantRepository,
 )
 from app.repositories.meeting_repository import MeetingRepository
-from app.repositories.resource_repository import ResourceRepository
+from app.repositories.meeting_reschedule_history_repository import (
+    MeetingRescheduleHistoryRepository,
+)
 from app.schemas.meeting import MeetingCreate, MeetingResponse, MeetingUpdate
 from app.services.analytics_service import (
     EVENT_CONFLICT_BLOCKED_OWNER,
@@ -46,6 +50,7 @@ from app.services.whatsapp_notification_service import (
     WhatsAppNotificationService,
 )
 from app.services.zoom_calendar_service import ZoomCalendarService
+from app.websocket.connection_manager import connection_manager
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,23 @@ class MeetingService:
         db: Session,
         meeting: MeetingCreate,
         current_user: User,
+        series_id: int | None = None,
+        series_sequence: int | None = None,
     ):
+        # series_id/series_sequence: optional, default None, set only
+        # by MeetingSeriesService when creating one occurrence of a
+        # recurring series - every existing caller is unaffected.
+
+        # Locks the owner's row for the rest of this transaction so a
+        # second, concurrent create_meeting call for the same owner
+        # must wait here instead of racing the check-then-insert below
+        # (two requests could otherwise both read "no conflict", then
+        # both insert, double-booking the same slot). Released on
+        # commit/rollback. SQLite (used by the test suite) has no
+        # row-level locking and silently ignores this - correct there
+        # too, since tests run single-threaded.
+        db.query(User).filter(User.id == current_user.id).with_for_update().first()
+
         # Get all meetings of the current user
         existing_meetings = MeetingRepository.get_user_meetings(
             db,
@@ -88,9 +109,14 @@ class MeetingService:
         # must exist, be active, and be free for this time range -
         # validated before the meeting is created.
         if meeting.resource_id is not None:
-            resource = ResourceRepository.get_by_id(
-                db,
-                meeting.resource_id,
+            # Same reasoning as the owner-row lock above, scoped to
+            # the resource being booked: forces concurrent bookings of
+            # the same resource to serialize instead of racing.
+            resource = (
+                db.query(Resource)
+                .filter(Resource.id == meeting.resource_id)
+                .with_for_update()
+                .first()
             )
 
             if resource is None:
@@ -148,6 +174,8 @@ class MeetingService:
             location=meeting.location,
             owner_id=current_user.id,
             resource_id=meeting.resource_id,
+            series_id=series_id,
+            series_sequence=series_sequence,
         )
 
         db_meeting = MeetingRepository.create(db, db_meeting)
@@ -287,6 +315,13 @@ class MeetingService:
                     db_meeting.id,
                 )
 
+        logger.info(
+            "Meeting created: meeting_id=%s owner_id=%s - starting "
+            "notification fan-out (email, slack, whatsapp, push).",
+            db_meeting.id,
+            db_meeting.owner_id,
+        )
+
         # Best-effort: the meeting is already committed above, so an
         # SMTP failure here must not turn a successful creation into
         # a failed request.
@@ -312,6 +347,11 @@ class MeetingService:
         # is best-effort and must not affect the response either way.
         cache_delete_prefix(meetings_list_prefix(current_user.id))
         cache_delete(kpis_key(current_user.id))
+        cache_delete_prefix(analytics_prefix(current_user.id))
+        connection_manager.broadcast_to_user_sync(
+            current_user.id,
+            {"type": "meeting_created", "meeting_id": db_meeting.id},
+        )
 
         return db_meeting
 
@@ -408,12 +448,144 @@ class MeetingService:
                 detail="Not authorized",
             )
 
+        # Cancellation Analytics V1: a cancelled meeting is now a
+        # persisted row (see MeetingService.delete_meeting) rather
+        # than a gone one, so it must be rejected here explicitly -
+        # otherwise it would silently become editable again. Setting
+        # status="cancelled" through this endpoint is also rejected:
+        # that transition must always go through delete_meeting, which
+        # is the only path that also sets cancelled_at/cancelled_by_id
+        # and runs the calendar-cleanup/notification side effects a
+        # real cancellation requires.
+        if meeting.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Meeting not found",
+            )
+
         update_data = meeting_data.model_dump(exclude_unset=True)
+
+        if update_data.get("status") == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Use DELETE /meetings/{meeting_id} to cancel a "
+                    "meeting."
+                ),
+            )
+
+        # Captured before the mutation below - Reschedule Analytics V1
+        # needs the pre-update slot, and by the time MeetingRepository
+        # .update() commits, `meeting.start_time`/`end_time` are
+        # already the new values.
+        previous_start_time = meeting.start_time
+        previous_end_time = meeting.end_time
+        time_changed = (
+            "start_time" in update_data or "end_time" in update_data
+        ) and (
+            update_data.get("start_time", previous_start_time)
+            != previous_start_time
+            or update_data.get("end_time", previous_end_time)
+            != previous_end_time
+        )
+
+        new_start_time = update_data.get("start_time", previous_start_time)
+        new_end_time = update_data.get("end_time", previous_end_time)
+        new_resource_id = update_data.get("resource_id", meeting.resource_id)
+        resource_changed = (
+            "resource_id" in update_data
+            and new_resource_id != meeting.resource_id
+        )
+
+        # Conflict detection was previously only run on create, so a
+        # reschedule (time change) or a resource re-booking here could
+        # silently land on top of an existing meeting/booking. Reuses
+        # the same lock-then-check pattern as create_meeting, and
+        # excludes this meeting's own (pre-mutation) row from the
+        # results since it would otherwise trivially "conflict" with
+        # itself.
+        if time_changed or resource_changed:
+            db.query(User).filter(
+                User.id == current_user.id
+            ).with_for_update().first()
+
+            other_meetings = [
+                m
+                for m in MeetingRepository.get_user_meetings(
+                    db, current_user.id
+                )
+                if m.id != meeting.id
+            ]
+
+            conflict, conflicting_meeting = ConflictService.has_time_conflict(
+                new_start_time,
+                new_end_time,
+                other_meetings,
+            )
+
+            if conflict:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Meeting conflicts with "
+                        f"'{conflicting_meeting.title}'"
+                    ),
+                )
+
+            if new_resource_id is not None:
+                db.query(Resource).filter(
+                    Resource.id == new_resource_id
+                ).with_for_update().first()
+
+                resource_bookings = [
+                    m
+                    for m in MeetingRepository.get_resource_bookings_between(
+                        db, new_resource_id, new_start_time, new_end_time,
+                    )
+                    if m.id != meeting.id
+                ]
+
+                if resource_bookings:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"Resource is already booked for "
+                            f"'{resource_bookings[0].title}'."
+                        ),
+                    )
 
         for key, value in update_data.items():
             setattr(meeting, key, value)
 
         meeting = MeetingRepository.update(db, meeting)
+
+        # Reschedule Analytics V1: record the move so /analytics
+        # /reschedule can report on it later - a meeting's row only
+        # ever holds its current slot, so this is the only place the
+        # previous one is ever recorded. Covers both a manual PUT and
+        # SchedulerService.auto_reschedule_meeting, since the latter
+        # persists through this same method. Best-effort: a logging
+        # failure must not turn an already-committed reschedule into a
+        # failed response.
+        if time_changed:
+            try:
+                MeetingRescheduleHistoryRepository.create(
+                    db,
+                    meeting_id=meeting.id,
+                    previous_start_time=previous_start_time,
+                    previous_end_time=previous_end_time,
+                    new_start_time=meeting.start_time,
+                    new_end_time=meeting.end_time,
+                    rescheduled_by_id=current_user.id,
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception(
+                    "Failed to record reschedule history. "
+                    "meeting_id=%s",
+                    meeting.id,
+                )
 
         # Google Calendar sync is a best-effort side effect, isolated
         # from the database transaction above (already committed): a
@@ -504,6 +676,11 @@ class MeetingService:
         PushNotificationService.notify_meeting_updated(db, meeting)
 
         cache_delete_prefix(meetings_list_prefix(current_user.id))
+        cache_delete_prefix(analytics_prefix(current_user.id))
+        connection_manager.broadcast_to_user_sync(
+            current_user.id,
+            {"type": "meeting_updated", "meeting_id": meeting.id},
+        )
 
         return meeting
 
@@ -528,6 +705,17 @@ class MeetingService:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized",
+            )
+
+        # Cancellation Analytics V1 changed this from a hard delete to
+        # a soft delete (see below), so - unlike before, when a second
+        # delete on an already-gone row would 404 via get_by_id above -
+        # an already-cancelled meeting now still round-trips through
+        # get_by_id and must be rejected explicitly here instead.
+        if meeting.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Meeting not found",
             )
 
         # Delete Google Calendar event first. Note: this is a
@@ -599,12 +787,19 @@ class MeetingService:
         # raises, and must not block deletion either.
         PushNotificationService.notify_meeting_cancelled(db, meeting)
 
-        # Delete meeting from database. Participant rows are removed
-        # automatically at the database level (ON DELETE CASCADE on
-        # meeting_participants.meeting_id), so no manual participant
-        # cleanup is needed here.
+        # Cancellation Analytics V1: soft delete instead of removing
+        # the row, so cancelled meetings survive as an audit trail for
+        # /analytics/cancellations. Participant and external-guest
+        # rows are left in place too (they are no longer cleaned up by
+        # ON DELETE CASCADE since the meeting row itself now
+        # survives) - harmless leftover rows on a meeting that no
+        # longer shows up in any normal listing.
+        meeting.status = "cancelled"
+        meeting.cancelled_at = datetime.now(timezone.utc)
+        meeting.cancelled_by_id = current_user.id
+
         try:
-            MeetingRepository.delete(
+            MeetingRepository.update(
                 db,
                 meeting,
             )
@@ -613,13 +808,18 @@ class MeetingService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    "Unable to delete meeting due to related "
+                    "Unable to cancel meeting due to related "
                     "records. Please try again or contact support."
                 ),
             )
 
         cache_delete_prefix(meetings_list_prefix(current_user.id))
         cache_delete(kpis_key(current_user.id))
+        cache_delete_prefix(analytics_prefix(current_user.id))
+        connection_manager.broadcast_to_user_sync(
+            current_user.id,
+            {"type": "meeting_cancelled", "meeting_id": meeting.id},
+        )
 
         return {
             "message": "Meeting deleted successfully"

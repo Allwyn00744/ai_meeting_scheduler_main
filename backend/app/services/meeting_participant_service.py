@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,10 @@ from app.schemas.meeting_participant import (
     ParticipantCreate,
     ParticipantUpdate,
 )
+from app.services.email_service import EmailService
+from app.services.notification_log_service import NotificationLogService
+
+logger = logging.getLogger(__name__)
 
 
 class MeetingParticipantService:
@@ -74,7 +80,34 @@ class MeetingParticipantService:
             user_id=participant.user_id,
         )
 
-        return MeetingParticipantRepository.create(db, db_participant)
+        created = MeetingParticipantRepository.create(db, db_participant)
+
+        # Best-effort: the participant row is already committed above,
+        # so an SMTP failure here must not turn a successful invite
+        # into a failed request - mirrors MeetingNotificationService's
+        # create/update/cancel hooks in MeetingService.
+        sent = EmailService.try_send_meeting_invitation(
+            to_email=participant_user.email,
+            meeting_title=meeting.title,
+            start_time=meeting.start_time,
+            end_time=meeting.end_time,
+            location=meeting.location,
+        )
+        NotificationLogService.try_record(
+            user_id=meeting.owner_id,
+            channel="email",
+            # "created" (not a dedicated "invited" value): the
+            # notification_logs.event_type check constraint only
+            # allows created/updated/cancelled/test, and this is the
+            # same invitation content as the create-time email sent to
+            # participants/guests who were already on the meeting at
+            # creation time.
+            event_type="created",
+            success=sent,
+            meeting_id=meeting.id,
+        )
+
+        return created
 
     @staticmethod
     def get_participants(

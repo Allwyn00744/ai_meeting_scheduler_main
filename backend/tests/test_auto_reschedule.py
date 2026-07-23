@@ -553,16 +553,23 @@ class AutoRescheduleTestCase(unittest.TestCase):
     # 17. Redis meeting caches invalidated
     # ------------------------------------------------------------------
     def test_redis_meeting_cache_invalidated(self):
-        from app.core.cache import meetings_list_prefix
+        from app.core.cache import analytics_prefix, meetings_list_prefix
 
         meeting = self.add_meeting(id=26, owner_id=self.owner.id)
 
         SchedulerService.auto_reschedule_meeting(self.db, 26, self.owner)
 
-        self.mocks["cache_delete_prefix"].assert_called_once()
+        # Two prefixes are invalidated: the meetings list cache (as
+        # before), and - since this update also writes reschedule
+        # history - the analytics cache prefix added alongside it.
+        self.assertEqual(self.mocks["cache_delete_prefix"].call_count, 2)
+        invalidated_prefixes = {
+            call_args.args[0]
+            for call_args in self.mocks["cache_delete_prefix"].call_args_list
+        }
         self.assertEqual(
-            self.mocks["cache_delete_prefix"].call_args.args[0],
-            meetings_list_prefix(self.owner.id),
+            invalidated_prefixes,
+            {meetings_list_prefix(self.owner.id), analytics_prefix(self.owner.id)},
         )
 
     # ------------------------------------------------------------------

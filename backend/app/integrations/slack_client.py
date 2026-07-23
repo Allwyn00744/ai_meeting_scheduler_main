@@ -1,6 +1,12 @@
 from urllib.parse import urlencode
 
 import requests
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import settings
 from app.models.slack_credential import SlackCredential
@@ -12,6 +18,16 @@ SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
 # Bounded so an unreachable/slow Slack endpoint can never stall a
 # request indefinitely - requests has no default timeout of its own.
 SLACK_TIMEOUT_SECONDS = 10
+
+# Transport-level failures only (connection refused/reset, timed out) -
+# never a parsed Slack error (invalid_auth, channel_not_found, etc,
+# raised as SlackAPIError below), which means the request reached
+# Slack and was rejected, so retrying would just delay the same
+# inevitable failure. Mirrors GoogleCalendarService._refresh_with_retry.
+_TRANSIENT_REQUEST_ERRORS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
 
 
 class SlackAPIError(Exception):
@@ -71,6 +87,12 @@ class SlackAPI:
     """
 
     @staticmethod
+    @retry(
+        retry=retry_if_exception_type(_TRANSIENT_REQUEST_ERRORS),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, max=4),
+        reraise=True,
+    )
     def post_message(credential: SlackCredential, text: str) -> dict:
         response = requests.post(
             SLACK_POST_MESSAGE_URL,

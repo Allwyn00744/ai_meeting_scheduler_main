@@ -11,6 +11,7 @@ export interface User {
   name: string;
   email: string;
   timezone: string;
+  department: string | null;
 }
 
 export interface TokenResponse {
@@ -50,6 +51,9 @@ export interface Meeting {
   // meeting is the existing Outlook event with isOnlineMeeting set,
   // not a separate resource, so there's no second ID to expose.
   teams_join_url: string | null;
+  // Recurring Meetings V1 - both null for a normal, one-off meeting.
+  series_id: number | null;
+  series_sequence: number | null;
 }
 
 export interface MeetingCreatePayload {

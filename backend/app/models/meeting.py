@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    Integer,
     String,
     Text,
     DateTime,
@@ -37,11 +38,13 @@ class Meeting(Base):
     start_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        index=True,
     )
 
     end_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        index=True,
     )
 
     location: Mapped[str | None] = mapped_column(
@@ -100,15 +103,50 @@ class Meeting(Base):
     status: Mapped[str] = mapped_column(
         String(50),
         default="scheduled",
+        index=True,
     )
 
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"),
         nullable=False,
+        index=True,
+    )
+
+    # Cancellation Analytics V1: MeetingService.delete_meeting sets
+    # these (and status="cancelled") instead of hard-deleting the row,
+    # so cancelled meetings survive as an audit trail. Both nullable -
+    # every meeting created before this change, and every meeting that
+    # is never cancelled, simply never sets them.
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    cancelled_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     resource_id: Mapped[int | None] = mapped_column(
         ForeignKey("resources.id"),
+        nullable=True,
+        index=True,
+    )
+
+    # Recurring Meetings V1. Both nullable - a normal, one-off meeting
+    # (the overwhelming majority, and every meeting created before
+    # this) simply never sets them. series_sequence is this
+    # occurrence's 0-based position within its series, used by
+    # MeetingSeriesService's "this and following" edit/cancel to
+    # select which rows to touch.
+    series_id: Mapped[int | None] = mapped_column(
+        ForeignKey("meeting_series.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    series_sequence: Mapped[int | None] = mapped_column(
+        Integer,
         nullable=True,
     )
 

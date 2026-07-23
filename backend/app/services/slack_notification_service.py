@@ -9,6 +9,13 @@ from app.models.slack_credential import SlackCredential
 from app.repositories.slack_credential_repository import (
     SlackCredentialRepository,
 )
+from app.services.notification_log_service import NotificationLogService
+
+_EVENT_TYPE_BY_LABEL = {
+    "Created": "created",
+    "Updated": "updated",
+    "Cancelled": "cancelled",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -147,10 +154,24 @@ class SlackNotificationService:
                 "Slack test notification failed. user_id=%s",
                 user_id,
             )
+            NotificationLogService.try_record(
+                user_id=user_id,
+                channel="slack",
+                event_type="test",
+                success=False,
+                error_detail="Failed to send the Slack test notification.",
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to send the Slack test notification.",
             )
+
+        NotificationLogService.try_record(
+            user_id=user_id,
+            channel="slack",
+            event_type="test",
+            success=True,
+        )
 
     @staticmethod
     def _build_message(event_label: str, meeting: Meeting) -> str:
@@ -195,13 +216,28 @@ class SlackNotificationService:
                     meeting,
                 ),
             )
+            NotificationLogService.try_record(
+                user_id=meeting.owner_id,
+                channel="slack",
+                event_type=_EVENT_TYPE_BY_LABEL[event_label],
+                success=True,
+                meeting_id=meeting.id,
+            )
             return True
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Failed to send Slack notification. meeting_id=%s "
                 "event=%s",
                 meeting.id,
                 event_label,
+            )
+            NotificationLogService.try_record(
+                user_id=meeting.owner_id,
+                channel="slack",
+                event_type=_EVENT_TYPE_BY_LABEL[event_label],
+                success=False,
+                meeting_id=meeting.id,
+                error_detail=f"{type(exc).__name__}: {exc}",
             )
             return False
 

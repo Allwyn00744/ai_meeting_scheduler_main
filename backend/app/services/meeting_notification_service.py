@@ -9,6 +9,7 @@ from app.repositories.meeting_participant_repository import (
 )
 from app.repositories.user_repository import UserRepository
 from app.services.email_service import EmailService
+from app.services.notification_log_service import NotificationLogService
 
 
 class MeetingNotificationService:
@@ -59,17 +60,53 @@ class MeetingNotificationService:
         return deduped
 
     @staticmethod
+    def _resolve_created_recipients(
+        db: Session,
+        meeting: Meeting,
+    ) -> list[str]:
+        """
+        Like _resolve_recipients, but also includes the meeting owner -
+        unlike an update/cancellation (where the owner is the one who
+        made the change and already knows about it), the owner has no
+        other way to get a confirmation that their own meeting was
+        created, since MeetingCreate has no participant_ids field and
+        participants are only ever added afterward via a separate
+        endpoint.
+        """
+        recipients = MeetingNotificationService._resolve_recipients(
+            db,
+            meeting,
+        )
+
+        owner = UserRepository.get_user_by_id(db, meeting.owner_id)
+
+        if owner is not None and owner.email:
+            normalized_owner_email = owner.email.strip().lower()
+
+            if normalized_owner_email not in recipients:
+                recipients = [normalized_owner_email] + recipients
+
+        return recipients
+
+    @staticmethod
     def notify_meeting_created(db: Session, meeting: Meeting) -> None:
-        for email in MeetingNotificationService._resolve_recipients(
+        for email in MeetingNotificationService._resolve_created_recipients(
             db,
             meeting,
         ):
-            EmailService.try_send_meeting_invitation(
+            sent = EmailService.try_send_meeting_invitation(
                 to_email=email,
                 meeting_title=meeting.title,
                 start_time=meeting.start_time,
                 end_time=meeting.end_time,
                 location=meeting.location,
+            )
+            NotificationLogService.try_record(
+                user_id=meeting.owner_id,
+                channel="email",
+                event_type="created",
+                success=sent,
+                meeting_id=meeting.id,
             )
 
     @staticmethod
@@ -78,12 +115,19 @@ class MeetingNotificationService:
             db,
             meeting,
         ):
-            EmailService.try_send_meeting_update(
+            sent = EmailService.try_send_meeting_update(
                 to_email=email,
                 meeting_title=meeting.title,
                 start_time=meeting.start_time,
                 end_time=meeting.end_time,
                 location=meeting.location,
+            )
+            NotificationLogService.try_record(
+                user_id=meeting.owner_id,
+                channel="email",
+                event_type="updated",
+                success=sent,
+                meeting_id=meeting.id,
             )
 
     @staticmethod
@@ -92,9 +136,16 @@ class MeetingNotificationService:
             db,
             meeting,
         ):
-            EmailService.try_send_meeting_cancellation(
+            sent = EmailService.try_send_meeting_cancellation(
                 to_email=email,
                 meeting_title=meeting.title,
                 start_time=meeting.start_time,
                 end_time=meeting.end_time,
+            )
+            NotificationLogService.try_record(
+                user_id=meeting.owner_id,
+                channel="email",
+                event_type="cancelled",
+                success=sent,
+                meeting_id=meeting.id,
             )

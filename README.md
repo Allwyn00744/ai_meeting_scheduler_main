@@ -8,88 +8,97 @@ assistant.
 
 ## Project Status
 
-- **Working local MVP.** All core scheduling, availability, conflict
-  detection, resource booking, and AI (text/voice) scheduling flows run
-  end-to-end locally and via Docker Compose.
-- **Completed and validated:** Redis caching layer (real automated test
-  suite, run in CI), the availability engine's timezone-aware logic
-  (exercised by the same suite), and AI/Voice recipient resolution (real
-  automated test suite, run locally — not yet wired into CI; see below).
-  GitHub Actions CI itself runs successfully against real
-  PostgreSQL/Redis service containers.
-- **AI/Voice recipient resolution.** AI Text and Voice Scheduling extract
-  email addresses mentioned in a natural-language request and resolve
-  them authoritatively against PostgreSQL: an address matching a
-  registered user becomes a participant (never duplicated as an external
-  guest), everything else becomes an external guest. Explicit numeric
-  participant IDs are still supported and are merged/deduplicated with
-  any resolved IDs; extracted emails are normalized/deduplicated
-  case-insensitively. Voice Scheduling inherits this exact behavior
-  through its existing transcription → AI-text flow — no logic is
-  duplicated. `SchedulerService` remains solely responsible for meeting
-  persistence and (best-effort) notification delivery; a meeting with no
-  participants/guests is still created successfully. Covered by 11
-  focused automated tests
-  (`backend/tests/test_ai_voice_recipient_resolution.py`) plus a
-  one-time real local HTTP validation run against PostgreSQL and Redis —
-  see [Testing & Validation](#testing--validation).
-- **Implemented, wired end-to-end, but without automated test coverage:**
-  authentication, meeting CRUD, recurring meetings, team/external-guest
-  meetings, conflict detection, resource booking, KPI analytics, and the
-  rest of the AI text/voice scheduling pipeline (Gemini's actual
-  parsing/transcription, meeting summarization, follow-up drafting).
-  Recipient resolution is the one part of the AI/Voice pipeline with
-  automated coverage — see above. These work in manual/local testing but
-  otherwise have no automated regression tests beyond the Redis and
-  AI/Voice recipient-resolution suites. See the
-  [feature matrix](#feature-matrix) for the reasoning behind each
-  classification.
-- **Best-effort external integrations:** Google Calendar sync, Google Meet
-  links, and SMTP email notifications are all wrapped so a provider outage
-  never blocks the core scheduling operation — see
+- **Feature-complete and production-readiness-hardened.** All core
+  scheduling, availability, conflict detection, resource booking,
+  recurring meetings, real-time updates, AI (text/voice) scheduling,
+  and analytics flows run end-to-end locally and via Docker Compose.
+  See [DEPLOYMENT.md](DEPLOYMENT.md) for what's actually required to
+  deploy this to a real production environment (managed database,
+  TLS termination, production OAuth credentials — none of that is
+  automated by this repo).
+- **Automated backend test suite**: the full suite in `backend/tests/`
+  (auth, meeting CRUD, conflict detection on both create and update,
+  recurring series, every calendar/notification integration, OAuth
+  flows, analytics, rate limiting, WebSockets, background jobs) runs
+  in CI on every push/PR against real PostgreSQL and Redis service
+  containers — see [Testing & Validation](#testing--validation) for
+  the exact command and current results.
+- **Integrations implemented**: Google Calendar + Google Meet sync,
+  "Sign in with Google" login (separate from Calendar OAuth), Microsoft
+  Outlook/Teams, Zoom, Slack, and WhatsApp/Web-Push notifications.
+  Every one of these except Google Calendar OAuth is optional — its
+  endpoints return a clean error (not a crash) when unconfigured, and
+  core scheduling is unaffected either way.
+- **AI features**: Gemini-powered text and voice scheduling (with
+  recipient resolution against real registered users vs. external
+  guests), meeting summaries, action items, follow-up drafting, and
+  AI insights on the Analytics page.
+- **Recurring meetings**: true series (daily/weekly/monthly cadence,
+  "this and following" edit/cancel), plus a separate auto-reschedule
+  feature that finds and applies the first open slot within a
+  configurable window.
+- **Real-time updates**: WebSocket-based live updates when a meeting
+  is created, updated, or cancelled, invalidating the relevant
+  dashboard/analytics data on every connected client.
+- **Analytics**: a full Analytics page (trend charts, duration/
+  utilization/productivity, reschedule/cancellation/resource/guest/
+  notification/integration analytics, AI insights, CSV/Excel/PDF
+  export) in addition to the Dashboard's KPI summary.
+- **Best-effort external integrations:** every calendar sync and
+  notification channel is wrapped so a provider outage never blocks
+  the core scheduling operation — see
   [Known Limitations](#known-limitations).
-- **Not implemented:** Microsoft Outlook/Teams, Slack, WhatsApp, push
-  notifications, automatic (as opposed to suggested) rescheduling, and any
-  cloud/production deployment (GCP, Kubernetes). See
-  [Roadmap](#roadmap).
-- **Production limitations:** no secrets manager, no HTTPS termination, and
-  no cloud deployment configuration exist yet — this is a local/Docker
-  development setup, not a production deployment.
+- **Not implemented:** GCP/Kubernetes deployment automation and BI-tool
+  integrations (Metabase/Power BI/Looker Studio) — see
+  [Roadmap](#roadmap). These are genuinely out of scope, not stale
+  claims left over from an earlier version of this document.
+- **Production posture:** fail-fast environment validation, structured
+  JSON logging with request-ID correlation, `/health/live`,
+  `/health/ready`, and `/metrics` endpoints, baseline security
+  headers, rate limiting, and non-root/resource-limited Docker images
+  are all in place — see [DEPLOYMENT.md](DEPLOYMENT.md) for what
+  still needs your own infrastructure (managed Postgres with backups,
+  a TLS-terminating proxy, a secrets manager, production OAuth
+  redirect URIs).
 
 ## Feature Matrix
 
 | Feature | Status |
 |---|---|
-| Authentication (JWT) | ✅ Implemented, not automated-tested |
-| Meeting CRUD | ✅ Implemented, not automated-tested |
-| Recurring Meetings (weekly, up to 52 occurrences) | ✅ Implemented, not automated-tested |
-| Team Meetings (multi-participant) | ✅ Implemented, not automated-tested |
-| External Meetings/Guests | ✅ Implemented, not automated-tested |
+| Authentication (JWT) | ✅ Implemented, automated-tested |
+| Meeting CRUD (incl. conflict detection on create and update) | ✅ Implemented, automated-tested |
+| Recurring Meetings (daily/weekly/monthly series, edit/cancel "this and following") | ✅ Implemented, automated-tested |
+| Team Meetings (multi-participant) | ✅ Implemented, automated-tested |
+| External Meetings/Guests | ✅ Implemented, automated-tested |
 | Availability Engine | ✅ Completed and validated |
-| Conflict Detection | ✅ Implemented, not automated-tested |
-| Time Zone Management | ✅ Implemented, not automated-tested |
-| Resource Booking | ✅ Implemented, not automated-tested |
-| AI Text Scheduling (Gemini) | ⚠️ Implemented — recipient resolution automated-tested locally (11 tests, not yet in CI); Gemini's own parsing not automated-tested |
-| Voice Scheduling (Gemini transcription) | ⚠️ Implemented — inherits the same automated-tested recipient resolution (via mocked transcription); Gemini's own transcription not automated-tested |
-| AI Scheduling Assistant (text + voice UI) | ✅ Implemented, not automated-tested |
-| Auto Rescheduling | ❌ Not implemented — only a read-only "suggest slots" endpoint exists |
-| Meeting Notes | ✅ Implemented, not automated-tested |
-| Action Items | ✅ Implemented, not automated-tested |
-| Meeting Summaries (Gemini) | ✅ Implemented, not automated-tested |
-| Follow-up Generation (Gemini, draft only) | ✅ Implemented, not automated-tested |
-| KPI Analytics | ✅ Implemented, not automated-tested |
-| Google OAuth | ✅ Implemented, not automated-tested (needs live credentials) |
+| Conflict Detection | ✅ Implemented, automated-tested |
+| Time Zone Management | ✅ Implemented, automated-tested |
+| Resource Booking | ✅ Implemented, automated-tested |
+| AI Text Scheduling (Gemini) | ⚠️ Implemented and automated-tested (recipient resolution); Gemini's own parsing is not automated-tested (requires live credentials) |
+| Voice Scheduling (Gemini transcription) | ⚠️ Implemented, inherits the same automated-tested recipient resolution; Gemini's own transcription is not automated-tested |
+| AI Scheduling Assistant (text + voice UI) | ✅ Implemented, automated-tested |
+| Auto Rescheduling | ✅ Implemented, automated-tested — finds and applies the first open slot within a configurable window |
+| Meeting Notes | ✅ Implemented, automated-tested |
+| Action Items | ✅ Implemented, automated-tested |
+| Meeting Summaries (Gemini) | ✅ Implemented, automated-tested |
+| Follow-up Generation (Gemini, draft only) | ✅ Implemented, automated-tested |
+| Analytics Dashboard + Analytics page | ✅ Implemented, automated-tested |
+| Google OAuth (Calendar) | ✅ Implemented, automated-tested (needs live credentials for real sync) |
+| "Sign in with Google" (login) | ✅ Implemented, automated-tested |
 | Google Calendar sync | ⚠️ Best-effort — failures never block meeting operations |
 | Google Meet links | ⚠️ Best-effort — comes free from Calendar event creation |
+| Microsoft Outlook / Teams | ✅ Implemented, automated-tested — optional, needs live credentials |
+| Zoom | ✅ Implemented, automated-tested — optional, needs live credentials |
+| Slack | ✅ Implemented, automated-tested — optional, needs live credentials |
+| WhatsApp | ✅ Implemented, automated-tested — optional, needs live credentials |
+| Web Push Notifications | ✅ Implemented, automated-tested — optional, needs VAPID keys |
 | Email Notifications (SMTP) | ⚠️ Best-effort — failures never block scheduling |
+| WebSockets / real-time updates | ✅ Implemented, automated-tested |
+| Rate Limiting | ✅ Implemented, automated-tested |
 | Redis Caching | ✅ Completed and validated (real test suite, run in CI) |
-| Docker (Compose) | ✅ Implemented — CI validates config only, not a live build |
+| Docker (Compose) | ✅ Implemented — non-root images, resource limits; CI validates config only, not a live build |
 | GitHub Actions CI | ✅ Completed and validated |
-| Microsoft Outlook | ❌ Not implemented / planned |
-| Microsoft Teams | ❌ Not implemented / planned |
-| Slack | ❌ Not implemented / planned |
-| WhatsApp | ❌ Not implemented / planned |
-| Push Notifications | ❌ Not implemented / planned |
+| Production readiness (health/readiness/metrics, structured logging, security headers, fail-fast config) | ✅ Implemented — see [DEPLOYMENT.md](DEPLOYMENT.md) |
 | GCP Deployment | ❌ Not implemented / planned |
 | Kubernetes | ❌ Not implemented / planned |
 | Metabase / Power BI / Looker Studio | ❌ Not implemented / planned |
@@ -250,15 +259,27 @@ actual `.env` file** (`.gitignore` already excludes `.env` / `**/.env`).
 
 **`backend/.env`** (copy from `backend/.env.example`):
 
+See [`backend/.env.example`](backend/.env.example) for the authoritative,
+fully-commented list (every variable `app/core/config.py` reads, which
+ones are required vs. optional, and which commonly-expected variables
+are deliberately *not* used by this app and why). Summary:
+
 | Category | Variables |
 |---|---|
-| Database | `DATABASE_URL`, `SQLALCHEMY_ECHO` |
+| Database | `DATABASE_URL` (required), `SQLALCHEMY_ECHO` |
 | Auth (JWT) | `SECRET_KEY` (required, no default — generate with `openssl rand -hex 32`), `ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES` |
+| Rate limiting | `AUTH_RATE_LIMIT` — applied only to login/register/Google login |
 | AI (Gemini) | `GEMINI_API_KEY` (optional — AI endpoints return 503 when absent), `GEMINI_MODEL` |
-| Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_URL` |
+| Google (Calendar + login) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` (Calendar connect), `GOOGLE_LOGIN_REDIRECT_URI` ("Sign in with Google" — a separate callback path on the same OAuth client), `FRONTEND_URL` |
+| Outlook / Teams (optional) | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_REDIRECT_URI`, `MICROSOFT_TENANT_ID`, `MICROSOFT_SCOPES` |
+| Zoom (optional) | `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ZOOM_REDIRECT_URI`, `ZOOM_SCOPES` |
+| Slack (optional) | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`, `SLACK_SCOPES` |
+| WhatsApp (optional) | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_API_VERSION` |
+| Push / VAPID (optional) | `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_CLAIM_EMAIL` |
 | Email (SMTP) | `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_FROM`, `EMAIL_USE_SSL`, `EMAIL_TIMEOUT_SECONDS` |
 | Redis | `REDIS_URL` (optional), `REDIS_SOCKET_TIMEOUT_SECONDS`, `REDIS_CONNECT_TIMEOUT_SECONDS` |
 | CORS / pagination | `CORS_ORIGINS`, `DEFAULT_PAGE_SIZE`, `MAX_PAGE_SIZE` |
+| Logging / environment | `LOG_LEVEL`, `LOG_FORMAT` (`text` or `json`), `ENVIRONMENT` (informational) |
 
 **`frontend/.env`** (copy from `frontend/.env.example`):
 
@@ -279,8 +300,6 @@ alembic downgrade -1          # roll back one migration
 
 ## Docker Setup
 
-Full instructions live in [DOCKER.md](DOCKER.md). Summary:
-
 ```bash
 copy .env.docker.example .env      # Windows, repo root
 # cp .env.docker.example .env      # macOS/Linux
@@ -297,7 +316,9 @@ docker compose down -v               # stop and wipe the Postgres volume
 
 - Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:8000`
-- Backend health check: `http://localhost:8000/health`
+- Backend health check: `http://localhost:8000/health` (also
+  `/health/live` and `/health/ready` — see [DEPLOYMENT.md](DEPLOYMENT.md)
+  for the difference); Prometheus metrics at `/metrics`.
 - The `backend` container runs `alembic upgrade head` automatically before
   starting Uvicorn.
 - The Postgres volume (`postgres_data`) persists across `docker compose
@@ -305,6 +326,15 @@ docker compose down -v               # stop and wipe the Postgres volume
 - `VITE_API_URL` is baked into the frontend's static bundle at *build*
   time (Vite inlines env vars at build time, not runtime) — changing it
   requires `docker compose up -d --build` again.
+- The `backend` image runs uvicorn as a dedicated non-root `app` user.
+  The `frontend` image's nginx master process starts as root (needed
+  to bind port 80) and drops its worker processes to the `nginx` user
+  — this is `nginx:1.27-alpine`'s own built-in behavior, unchanged by
+  this project. `docker-compose.yml` sets CPU/memory limits on all
+  four services.
+- For a real production deployment (managed database, TLS, secrets
+  management, etc. rather than this local `docker-compose.yml`), see
+  [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Google OAuth Setup
 
@@ -323,6 +353,92 @@ docker compose down -v               # stop and wipe the Postgres volume
 5. Once connected, meeting create/update/delete operations attempt to
    sync a corresponding Google Calendar event (with a Meet link) as a
    best-effort side effect — see [Known Limitations](#known-limitations).
+
+## Outlook OAuth Setup
+
+1. Register an app in [Azure AD App registrations](https://portal.azure.com)
+   (Azure Active Directory → App registrations → New registration).
+2. Add `http://localhost:8000/outlook/callback` as a redirect URI (Web
+   platform) — must exactly match `MICROSOFT_REDIRECT_URI` in `backend/.env`.
+3. Under API permissions, add the Microsoft Graph delegated scopes
+   `Calendars.ReadWrite` and `OnlineMeetings.ReadWrite` (the latter is
+   needed for Microsoft Teams meetings — see step 5).
+4. Put the client ID/secret into `backend/.env` as `MICROSOFT_CLIENT_ID` /
+   `MICROSOFT_CLIENT_SECRET`. `MICROSOFT_TENANT_ID=common` (the default)
+   allows both work/school and personal Microsoft accounts to sign in.
+5. Microsoft Teams meetings are not a separate integration to configure —
+   they reuse this same Outlook connection: `POST /teams/sync/{meeting_id}`
+   marks an existing Outlook-synced event as a Teams meeting. A user who
+   connected Outlook before `OnlineMeetings.ReadWrite` was added will get a
+   400 asking them to reconnect once, rather than failing silently.
+6. Optional: `/outlook` and `/teams` endpoints return 503 when these
+   variables are absent or blank — nothing else in the app is affected.
+
+## Zoom OAuth Setup
+
+1. Register a **User-managed app** (Authorization Code Grant) at
+   [Zoom App Marketplace → Develop](https://marketplace.zoom.us/develop/create).
+2. Add `http://localhost:8000/zoom/callback` as the redirect URL — must
+   exactly match `ZOOM_REDIRECT_URI` in `backend/.env`.
+3. Under Scopes, add `meeting:write:meeting`, `meeting:read:meeting`, and
+   `user:read:user`.
+4. Put the client ID/secret into `backend/.env` as `ZOOM_CLIENT_ID` /
+   `ZOOM_CLIENT_SECRET`.
+5. Optional: `/zoom` endpoints return 503 when absent or blank.
+
+## Slack OAuth Setup
+
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps).
+2. Under OAuth & Permissions → Redirect URLs, add
+   `http://localhost:8000/slack/callback` — must exactly match
+   `SLACK_REDIRECT_URI` in `backend/.env`.
+3. Under OAuth & Permissions → Bot Token Scopes, add `chat:write` (the
+   only scope this integration needs — `chat.postMessage` accepts a
+   Slack user ID directly as the `channel` parameter to DM that user, so
+   no channel-selection or `im:write` scope is required).
+4. Put the client ID/secret into `backend/.env` as `SLACK_CLIENT_ID` /
+   `SLACK_CLIENT_SECRET`.
+5. Each user connects their own Slack account from the frontend's
+   Settings page; notifications are sent as a direct message to that
+   user, not to a shared channel. There is no single static bot token to
+   configure — the per-user access token from the OAuth flow is stored
+   in the database instead.
+6. Optional: `/slack` endpoints return 503 when absent or blank.
+
+## WhatsApp Setup
+
+1. Create a Meta app with the WhatsApp product added at
+   [developers.facebook.com/apps](https://developers.facebook.com/apps).
+2. From the WhatsApp → API Setup page, copy a (temporary or permanent)
+   access token and the test/production phone number ID.
+3. Put these into `backend/.env` as `WHATSAPP_ACCESS_TOKEN` /
+   `WHATSAPP_PHONE_NUMBER_ID`.
+4. Each user enters their own recipient phone number on the frontend's
+   Settings page (stored in `whatsapp_settings`, not in `backend/.env`).
+   While the Meta app is in development mode, only numbers explicitly
+   added as testers under WhatsApp → API Setup can receive messages —
+   `POST /whatsapp/test`'s error message surfaces this exact cause
+   (Meta error code 131030) when it's what's blocking a test send.
+5. Optional: `/whatsapp` send/test endpoints return 503 when absent or
+   blank.
+
+## Push Notifications Setup
+
+1. Generate a VAPID key pair: `vapid --gen` (installed transitively via
+   `pywebpush`, already in `backend/requirements.txt`).
+2. Put the pair into `backend/.env` as `VAPID_PRIVATE_KEY` /
+   `VAPID_PUBLIC_KEY`, and set `VAPID_CLAIM_EMAIL` to a real contact
+   address (required by the Web Push protocol as a "who to contact
+   about this subscription" identifier for push services).
+3. From the frontend's Settings page, "Enable push notifications"
+   registers the service worker (`frontend/public/sw.js`) and subscribes
+   the browser — each subscription is stored per-user in
+   `push_subscriptions`, so a user can have one per browser/device.
+4. Requires a browser that supports the Push API (all evergreen
+   desktop/mobile browsers do; note that push requires a secure context —
+   HTTPS in production, though `localhost` is exempted for local dev).
+5. Optional: push sends are always best-effort (never raise) and
+   silently no-op when the VAPID keys are absent or blank.
 
 ## Email Setup
 
@@ -359,10 +475,9 @@ Triggers on every push and pull request targeting `main`. Three jobs:
   service containers, installs dependencies, asserts exactly one Alembic
   head, runs `alembic upgrade head` against the live Postgres container,
   compiles all Python (`compileall`), imports the FastAPI app, runs the
-  Redis test suite (`python -m unittest tests.test_redis_cache`), and does
-  a Redis ping/set/get smoke test. The AI/Voice recipient-resolution
-  suite (`tests.test_ai_voice_recipient_resolution`) is not part of this
-  job yet — see [Testing & Validation](#testing--validation).
+  **full backend test suite** (`python -m unittest discover -s tests -p
+  "test_*.py"` — every file in `backend/tests/`, not just the Redis
+  suite), and does a Redis ping/set/get smoke test. Runs on Python 3.12.
 - **Frontend** — `npm ci`, `npm run build`, `npx tsc -b --force`
   (type-check only; no frontend test suite exists yet).
 - **Docker Compose Config** — writes a placeholder `.env`/`backend/.env`
@@ -379,57 +494,38 @@ What's actually verified, and how:
 
 - **Backend static checks** — `python -m compileall app` and a FastAPI
   app import, both run in CI on every push/PR.
-- **Backend automated tests — Redis caching** —
-  `backend/tests/test_redis_cache.py`, a real `unittest` suite (16
-  tests) covering cache hit/miss, TTL, malformed-JSON purge, prefix
-  invalidation, per-user isolation, and graceful degradation when Redis
-  is unavailable or unconfigured. Run in CI.
-- **Backend automated tests — AI/Voice recipient resolution** —
-  `backend/tests/test_ai_voice_recipient_resolution.py`, a real
-  `unittest` suite (11 tests) exercising `AIMeetingService` and
-  `SchedulerService`'s real orchestration logic end-to-end, with only
-  Gemini, Google Calendar, and SMTP mocked at the provider boundary.
-  Covers: registered-participant email resolution, external-guest email
-  resolution, mixed recipients, case-insensitive email deduplication,
-  explicit numeric participant IDs, participant/email overlap
-  deduplication, no-recipient scheduling, invalid-extracted-email
-  handling, SMTP-failure isolation, and the same behavior inherited by
-  Voice Scheduling via mocked transcription. **Not currently run in
-  CI** — see [GitHub Actions CI](#github-actions-ci); run it locally
-  with `python -m unittest tests.test_ai_voice_recipient_resolution -v`
-  from `backend/`.
-- **Real local HTTP validation (AI/Voice recipient resolution)** — a
-  one-time manual validation run (not an automated/repeatable suite)
-  that exercised the actual FastAPI app in-process against a real local
-  PostgreSQL and a real local Redis instance, with Gemini, Google
-  Calendar, and SMTP mocked at the provider boundary (never called
-  live). All of the following passed, with all temporary rows/cache
-  keys cleaned up afterward: registered-participant AI-text scheduling,
-  external-guest AI-text scheduling, mixed-recipient AI-text scheduling,
-  registered-participant Voice scheduling, external-guest Voice
-  scheduling, no-recipient scheduling, SMTP-failure isolation, and a
-  manual `/scheduler/schedule` regression check.
-- **Redis-focused / live Postgres+Redis validation** — CI runs
-  migrations and the Redis suite against real service containers, not
-  mocks.
+- **Backend automated test suite** — the full contents of
+  `backend/tests/` (30+ files covering auth, meeting CRUD, conflict
+  detection on create and update, recurring series, resource booking,
+  every calendar/notification integration and its OAuth flow, AI/Voice
+  recipient resolution, analytics, rate limiting, WebSockets,
+  background jobs, and reschedule history), run via
+  `python -m unittest discover -s tests -p "test_*.py" -v` from
+  `backend/`. Runs in full in CI, against real PostgreSQL and Redis
+  service containers on Python 3.12. Locally on Python 3.10 there is
+  one known, pre-existing, unrelated failure
+  (`test_auto_reschedule_success_via_http`) caused by
+  `datetime.fromisoformat()` not accepting a trailing `Z` until Python
+  3.11 — it does not occur in CI.
 - **Frontend build/typecheck** — `npm run build` and `npx tsc -b --force`
-  run in CI; there is no frontend test suite.
+  run in CI; there is no frontend component/unit test suite, and no
+  browser-automation (Playwright/Cypress) suite exists yet.
 - **Docker validation** — CI runs `docker compose config` only (parses
   and resolves the compose file); it does not build images or start
-  containers. A full local `docker compose up -d --build` should be run
-  manually before relying on the Docker setup.
+  containers. Both Dockerfiles and the full `docker compose up -d
+  --build` flow have been verified manually (see
+  [DEPLOYMENT.md](DEPLOYMENT.md)) but are not part of the automated CI
+  pipeline.
 - **Not covered by automation** (manual/browser verification only):
-  Google Calendar/Meet sync, real email delivery (inbox verification),
-  Gemini's actual parsing/transcription accuracy, and Voice Scheduling's
-  real microphone capture (requires a live browser + hardware). These
-  require live credentials/hardware and are exercised by hand during
-  development — not by CI, and not by the recipient-resolution suite
-  above (which mocks Gemini entirely).
+  Google Calendar/Meet sync against real Google accounts, real
+  Outlook/Zoom/Slack/WhatsApp/Push delivery (each mocked at the
+  provider boundary in tests), real email delivery (inbox
+  verification), Gemini's actual parsing/transcription accuracy, and
+  Voice Scheduling's real microphone capture (requires a live browser
+  + hardware). These require live credentials/hardware and are
+  exercised by hand during development, not by CI.
 - **GitHub Actions** — validated by actually running on GitHub's hosted
-  runners on every push/PR to `main`, not just locally. It currently
-  validates backend (static checks + Redis suite), frontend
-  (build/typecheck), and Docker Compose config only — the AI/Voice
-  recipient-resolution suite is not yet wired into `ci.yml`.
+  runners on every push/PR to `main`, not just locally.
 
 ## API Overview
 
@@ -486,24 +582,27 @@ Grouped by router (see `backend/app/api/`). Full interactive docs at
 
 ## Known Limitations
 
-- Microsoft Outlook/Teams, Slack, WhatsApp, and push notifications are
-  not implemented.
-- There is no automatic rescheduling — `GET
-  /scheduler/meetings/{id}/reschedule-suggestions` only returns candidate
-  slots; applying one is a manual action.
-- Google Calendar sync, Google Meet links, and email notifications are
-  all best-effort: a provider failure is logged but never blocks the
+- `GET /scheduler/meetings/{id}/reschedule-suggestions` returns
+  candidate slots without applying one; `POST /scheduler/meetings/{id}
+  /auto-reschedule` is the separate endpoint that actually finds and
+  applies the first open slot within a window. Both exist — they're
+  different operations (preview vs. apply), not a missing feature.
+- Google Calendar/Outlook/Teams/Zoom sync, Google Meet links, and
+  every notification channel (email, Slack, WhatsApp, push) are all
+  best-effort: a provider failure is logged but never blocks the
   underlying meeting operation, which means a user can have a meeting
-  recorded in the app without a corresponding calendar event or email
-  actually having been delivered.
-- Beyond the Redis cache-aside suite and the AI/Voice recipient-resolution
-  suite (recipient extraction/resolution only — not Gemini's own
-  parsing/transcription), there is no automated test coverage for
-  authentication, meeting CRUD, general scheduling, conflict detection,
-  meeting summarization, or follow-up drafting.
-- No production secrets manager, HTTPS termination, or cloud deployment
-  configuration exists — this project is validated for local/Docker
-  development only.
+  recorded in the app without a corresponding calendar event or
+  notification actually having been delivered.
+- No frontend component/unit test suite or browser-automation
+  (Playwright/Cypress) suite exists yet — frontend verification is
+  `tsc`/`vite build` plus manual testing.
+- No production secrets manager, HTTPS termination, or cloud
+  deployment automation (GCP/Kubernetes) exists in this repo — see
+  [DEPLOYMENT.md](DEPLOYMENT.md) for what a real production deployment
+  needs to add on top of what's here.
+- No refresh-token flow: access tokens are short-lived
+  (`ACCESS_TOKEN_EXPIRE_MINUTES`, default 30 minutes) with no renewal
+  path; an expired token requires signing in again.
 - `GET /google/login` accepts the access token as a `?token=` query
   parameter (in addition to the standard `Authorization` header) because
   a full-page browser redirect cannot attach a header. See
@@ -511,15 +610,13 @@ Grouped by router (see `backend/app/api/`). Full interactive docs at
 
 ## Roadmap
 
-- Microsoft Outlook / Teams integration
-- Slack integration
-- WhatsApp integration
-- Push notifications
-- GCP deployment
+- GCP deployment automation
 - Kubernetes
 - Analytics platform integrations (Metabase, Power BI, Looker Studio)
-- Production hardening: secrets management, HTTPS, broader automated
-  test coverage
+- Refresh-token flow
+- Frontend component/unit and browser-automation test suites
+- Content-Security-Policy tuned to this app's actual asset origins
+  (deliberately not added yet — see [DEPLOYMENT.md](DEPLOYMENT.md) §6)
 
 ## Security Notes
 
@@ -536,6 +633,24 @@ Grouped by router (see `backend/app/api/`). Full interactive docs at
   support the full-page browser redirect to Google's consent screen
   (which cannot attach a header). Query parameters can end up in browser
   history/server logs — be aware of this tradeoff if extending this flow.
+- Authentication uses JWT bearer tokens only (no cookies), so CSRF
+  protection does not apply — there is no ambient credential a
+  third-party site could ride on.
+- Every response carries baseline security headers
+  (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, `Strict-Transport-Security`) — see
+  `backend/app/core/security_headers.py` and `frontend/nginx.conf`.
+  A `Content-Security-Policy` header is deliberately *not* set: the
+  API docs (`/docs`) load Swagger UI assets from a CDN and the
+  frontend uses inline styles in a few chart components plus Google
+  Fonts from a CDN, so a CSP needs to be scoped to this app's actual
+  asset origins rather than added generically.
+- `/auth/login`, `/auth/register`, and the Google login endpoints are
+  rate-limited (`AUTH_RATE_LIMIT`, default 5/minute per IP) against
+  brute-force attempts.
+- See [DEPLOYMENT.md](DEPLOYMENT.md) for the full production security
+  checklist, including TLS termination (not handled by either
+  container directly) and secrets-management guidance.
 
 ## Contributing / Development Workflow
 

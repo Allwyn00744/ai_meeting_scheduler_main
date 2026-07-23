@@ -1,0 +1,21 @@
+# ---------- Environment ----------
+.env
+**/.env
+
+# ---------- Python ----------
+.venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ---------- VS Code ----------
+.vscode/
+
+# ---------- React ----------
+frontend/node_modules/
+frontend/dist/
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db

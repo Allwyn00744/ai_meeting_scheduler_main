@@ -60,6 +60,9 @@ class UserRepository:
         if user.email is not None:
             existing_user.email = user.email
 
+        if user.department is not None:
+            existing_user.department = user.department
+
         db.commit()
         db.refresh(existing_user)
 

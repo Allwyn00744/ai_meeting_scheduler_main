@@ -42,6 +42,15 @@ class User(Base):
         default="UTC",
     )
 
+    # Minimal Team Analytics V1: a free-text department label, used
+    # only for aggregate (non-identifying) cross-user analytics - see
+    # AnalyticsService.get_team_overview. Nullable because most users
+    # will never set it.
+    department: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
     oauth_provider: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,

@@ -7,8 +7,8 @@ import {
   ClipboardCheck,
   TriangleAlert,
   Sparkles,
-  EyeOff,
   Video,
+  BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -35,11 +35,75 @@ function formatDuration(minutes: number) {
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
 }
 
+/** Full ring gauge (0-100), rendered with real SVG so the stroke is pixel-accurate rather than a border/conic-gradient hack. A value of 0 (no data yet) renders as a plain gray ring with "0" in the center - never a fabricated number. */
+function RingGauge({ value, size = 96, stroke = 8 }: { value: number; size?: number; stroke?: number }) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c - (value / 100) * c;
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#F0EADC" strokeWidth={stroke} />
+        {value > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke="#FFB800"
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={c}
+            strokeDashoffset={offset}
+          />
+        )}
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-xl font-bold text-ink-700">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Half-circle "speedometer" arc gauge matching the Figma Scheduling Efficiency card. A value of 0 (no data yet) renders as a plain gray arc with "0%" - never a fabricated number. */
+function ArcGauge({ value, size = 200 }: { value: number; size?: number }) {
+  const stroke = 14;
+  const r = (size - stroke) / 2;
+  const cx = size / 2;
+  const cy = size / 2 + r * 0.15;
+  const startAngle = 180;
+  const endAngle = 0;
+
+  const pointAt = (angleDeg: number) => {
+    const a = (angleDeg * Math.PI) / 180;
+    return { x: cx + r * Math.cos(a), y: cy - r * Math.sin(a) };
+  };
+  const start = pointAt(startAngle);
+  const end = pointAt(endAngle);
+  const sweepAngle = startAngle - (value / 100) * (startAngle - endAngle);
+  const fillEnd = pointAt(sweepAngle);
+
+  const trackPath = `M ${start.x} ${start.y} A ${r} ${r} 0 0 1 ${end.x} ${end.y}`;
+  const fillPath = `M ${start.x} ${start.y} A ${r} ${r} 0 0 1 ${fillEnd.x} ${fillEnd.y}`;
+
+  return (
+    <div className="relative" style={{ width: size, height: size / 2 + 40 }}>
+      <svg width={size} height={size / 2 + 40}>
+        <path d={trackPath} fill="none" stroke="#F0EADC" strokeWidth={stroke} strokeLinecap="round" />
+        {value > 0 && (
+          <path d={fillPath} fill="none" stroke="#FFB800" strokeWidth={stroke} strokeLinecap="round" />
+        )}
+      </svg>
+      <div className="absolute inset-x-0 bottom-1 flex flex-col items-center">
+        <span className="text-3xl font-bold text-ink-700">{value}%</span>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [showEmptyState, setShowEmptyState] = React.useState(false);
-
   const {
     data: meetings,
     isLoading,
@@ -47,7 +111,7 @@ export default function Dashboard() {
     error,
   } = useQuery({
     queryKey: ["meetings"],
-    queryFn: () => meetingsApi.list({ limit: 100 }),
+    queryFn: () => meetingsApi.list({ limit: 200 }),
   });
 
   const { data: kpis } = useQuery({
@@ -72,32 +136,63 @@ export default function Dashboard() {
   const nextToday = todaysMeetings.find((m) => new Date(m.start_time).getTime() >= now.getTime());
   const pendingRsvp = upcoming.filter((m) => m.external_guests.length > 0).length;
   const completed = active.filter((m) => m.status === "completed").length;
+  const cancelledCount = (meetings ?? []).filter((m) => m.status === "cancelled").length;
 
   // Meeting Analytics: how many meetings fall on each weekday of the
-  // current week (Sun-Sat), from real meeting data.
-  const weekCounts = React.useMemo(() => {
+  // current week (Sun-Sat), from real meeting data. Also tracks last
+  // week's total so the "trend" caption below is a real comparison,
+  // not a fabricated "+12%".
+  const { weekCounts, thisWeekTotal, lastWeekTotal } = React.useMemo(() => {
     const counts = [0, 0, 0, 0, 0, 0, 0];
     const weekStart = new Date(startOfToday);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 7);
+    const lastWeekStart = new Date(weekStart);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+
+    let lastWeek = 0;
     for (const m of active) {
       const t = new Date(m.start_time);
       if (t >= weekStart && t < weekEnd) counts[t.getDay()] += 1;
+      else if (t >= lastWeekStart && t < weekStart) lastWeek += 1;
     }
-    return counts;
+    return {
+      weekCounts: counts,
+      thisWeekTotal: counts.reduce((a, b) => a + b, 0),
+      lastWeekTotal: lastWeek,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetings]);
-  const maxWeekCount = Math.max(1, ...weekCounts);
+  const maxWeekCount = Math.max(0, ...weekCounts);
+  const peakDayIndex = maxWeekCount > 0 ? weekCounts.indexOf(maxWeekCount) : -1;
+  const weekTrendPct = lastWeekTotal > 0 ? Math.round(((thisWeekTotal - lastWeekTotal) / lastWeekTotal) * 100) : 0;
+
+  // Shortest meeting on record, and a completed/total "resolved"
+  // ratio - both computed from real meeting durations/status rather
+  // than invented.
+  const shortestMinutes =
+    active.length > 0
+      ? Math.min(
+          ...active.map((m) => Math.round((new Date(m.end_time).getTime() - new Date(m.start_time).getTime()) / 60000))
+        )
+      : 0;
 
   // "Scheduling efficiency": share of scheduled meetings that didn't
   // hit a conflict, from the real KPI endpoint - not fabricated.
+  // Defaults to 0 (not hidden) when there's no KPI data yet, so the
+  // card always renders with the same layout, just zeroed out.
   const conflictFreeRate =
     kpis && kpis.meetings_scheduled > 0
       ? Math.max(0, Math.min(100, Math.round((1 - kpis.conflicts_avoided / kpis.meetings_scheduled) * 100)))
-      : null;
-  const completionRate = active.length > 0 ? Math.round((completed / active.length) * 100) : null;
-  const hoursSaved = kpis ? Math.round((kpis.time_saved_minutes / 60) * 10) / 10 : null;
+      : 0;
+  const completionRate = active.length > 0 ? Math.round((completed / active.length) * 100) : 0;
+  const hoursSaved = kpis ? Math.round((kpis.time_saved_minutes / 60) * 10) / 10 : 0;
+  // "Productivity score": share of scheduled meetings that weren't
+  // cancelled - a real, if approximate, stand-in for the design's
+  // "Productivity Score".
+  const totalScheduledEver = (meetings ?? []).length;
+  const productivityScore = totalScheduledEver > 0 ? Math.round((1 - cancelledCount / totalScheduledEver) * 100) : 0;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -125,9 +220,6 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={() => setShowEmptyState((s) => !s)}>
-            <EyeOff className="h-4 w-4" /> {showEmptyState ? "Hide" : "Show"} empty state
-          </Button>
           <Button onClick={() => navigate("/ai-assistant")}>
             <Plus className="h-4 w-4" /> New meeting
           </Button>
@@ -142,7 +234,7 @@ export default function Dashboard() {
           title="Couldn't load your meetings"
           body={getApiErrorMessage(error, "Check that the backend is running and reachable.")}
         />
-      ) : showEmptyState || (meetings ?? []).length === 0 ? (
+      ) : (meetings ?? []).length === 0 ? (
         <EmptyState
           icon={<CalendarCheck className="h-5 w-5" />}
           title="No meetings scheduled"
@@ -170,7 +262,7 @@ export default function Dashboard() {
             </div>
             <div className="rounded-2xl bg-white p-5 shadow-card">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Conflicts avoided</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Conflicts</p>
                 <TriangleAlert className="h-4 w-4 text-red-500" />
               </div>
               <p className="mt-2 text-3xl font-bold text-red-600">{kpis?.conflicts_avoided ?? 0}</p>
@@ -182,45 +274,50 @@ export default function Dashboard() {
             <div className="rounded-2xl bg-white p-6 shadow-card">
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-700/50">Weekly time saved</p>
               <p className="mt-2 flex items-baseline gap-1.5">
-                <span className="text-4xl font-bold text-brand-600">{hoursSaved ?? "—"}</span>
+                <span className="text-4xl font-bold text-brand-600">{hoursSaved}</span>
                 <span className="text-sm font-medium text-ink-700/60">Hours</span>
               </p>
               <div className="mt-4 flex items-center justify-between text-xs text-ink-700/60">
-                <span>Meetings scheduled</span>
-                <span className="font-semibold text-ink-700">{kpis?.meetings_scheduled ?? 0}</span>
+                <span>Productivity Score</span>
+                <span className="font-semibold text-ink-700">{productivityScore}%</span>
               </div>
               <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-cream-200">
                 <div
                   className="h-full rounded-full bg-brand-500"
-                  style={{ width: `${Math.min(100, ((kpis?.meetings_scheduled ?? 0) / Math.max(1, active.length)) * 100)}%` }}
+                  style={{ width: `${productivityScore ?? 0}%` }}
                 />
               </div>
+              <p className="mt-2 text-xs font-medium text-emerald-600">
+                {weekTrendPct >= 0 ? "↗" : "↘"} {Math.abs(weekTrendPct)}% from last week
+              </p>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-card">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-ink-700/50">Meeting completion</p>
+              <div className="mb-1 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink-700/50">Meeting Efficiency</p>
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-brand-700">
+                  <BarChart3 className="h-3.5 w-3.5" />
+                </div>
               </div>
-              <div className="mt-3 flex items-center gap-6">
-                <div className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-full border-[6px] border-cream-200">
-                  <div
-                    className="absolute inset-0 rounded-full"
-                    style={{
-                      background: `conic-gradient(#FFB800 ${(completionRate ?? 0) * 3.6}deg, transparent 0deg)`,
-                      mask: "radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 6px))",
-                      WebkitMask: "radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 6px))",
-                    }}
-                  />
-                  <span className="text-xl font-bold text-ink-700">{completionRate ?? "—"}</span>
+              <div className="mt-3 flex items-center gap-5">
+                <div className="flex flex-col items-center">
+                  <RingGauge value={completionRate} />
+                  <span className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-ink-700/40">
+                    Avg index
+                  </span>
                 </div>
                 <div className="grid flex-1 grid-cols-2 gap-3">
                   <div className="rounded-lg bg-cream-100 p-3">
-                    <p className="text-[11px] text-ink-700/50">Completed</p>
-                    <p className="text-lg font-bold text-ink-700">{completed}</p>
+                    <p className="text-[11px] uppercase tracking-wide text-ink-700/50">Shortest</p>
+                    <p className="text-lg font-bold text-brand-700">
+                      {formatDuration(shortestMinutes)}
+                    </p>
                   </div>
                   <div className="rounded-lg bg-cream-100 p-3">
-                    <p className="text-[11px] text-ink-700/50">Total</p>
-                    <p className="text-lg font-bold text-ink-700">{active.length}</p>
+                    <p className="text-[11px] uppercase tracking-wide text-ink-700/50">Resolved</p>
+                    <p className="text-lg font-bold text-ink-700">
+                      {`${completed}/${active.length}`}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -235,14 +332,20 @@ export default function Dashboard() {
                 {weekCounts.map((count, i) => (
                   <div key={i} className="flex flex-1 flex-col items-center gap-2">
                     <div className="relative flex w-full flex-1 items-end justify-center">
-                      {count > 0 && (
+                      {i === peakDayIndex && count > 0 && (
+                        <span className="absolute -top-6 rounded-full bg-cream-200 px-2 py-0.5 text-[10px] font-semibold text-ink-700 whitespace-nowrap">
+                          {count} Meeting{count === 1 ? "" : "s"}
+                        </span>
+                      )}
+                      {count > 0 ? (
                         <div
-                          className="w-full rounded-lg bg-brand-500"
-                          style={{ height: `${Math.max(8, (count / maxWeekCount) * 100)}%` }}
+                          className={`w-full rounded-lg ${i === peakDayIndex ? "bg-brand-500" : "bg-brand-300"}`}
+                          style={{ height: `${Math.max(8, (count / Math.max(1, maxWeekCount)) * 100)}%` }}
                           title={`${count} meeting${count === 1 ? "" : "s"}`}
                         />
+                      ) : (
+                        <div className="h-2 w-full rounded-lg bg-slate-100" />
                       )}
-                      {count === 0 && <div className="h-2 w-full rounded-lg bg-slate-100" />}
                     </div>
                     <span className="text-xs text-ink-700/50">{WEEKDAY_LABELS[i]}</span>
                   </div>
@@ -250,23 +353,10 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="rounded-2xl bg-white p-6 shadow-card">
-              <p className="mb-2 text-base font-semibold text-ink-700">Scheduling Efficiency</p>
-              <div className="flex flex-col items-center py-4">
-                <div
-                  className="relative flex h-28 w-28 items-center justify-center rounded-full border-[10px] border-cream-200"
-                  style={{
-                    borderTopColor: "#FFB800",
-                    borderRightColor: conflictFreeRate && conflictFreeRate > 50 ? "#FFB800" : undefined,
-                    transform: "rotate(-45deg)",
-                  }}
-                >
-                  <span className="text-2xl font-bold text-ink-700" style={{ transform: "rotate(45deg)" }}>
-                    {conflictFreeRate ?? "—"}%
-                  </span>
-                </div>
-                <p className="mt-3 text-xs text-ink-700/50">Conflict-free scheduling rate</p>
-              </div>
+            <div className="flex flex-col items-center rounded-2xl bg-white p-6 shadow-card">
+              <p className="mb-2 self-start text-base font-semibold text-ink-700">Scheduling Efficiency</p>
+              <ArcGauge value={conflictFreeRate} />
+              <p className="-mt-2 text-xs text-ink-700/50">Time Optimized</p>
             </div>
           </div>
 
@@ -287,7 +377,7 @@ export default function Dashboard() {
                       key={m.id}
                       className="flex flex-wrap items-center gap-4 rounded-xl border border-slate-100 px-4 py-3.5"
                     >
-                      <div className="w-16 shrink-0 text-sm font-semibold text-ink-700">
+                      <div className="w-16 shrink-0 text-sm font-semibold text-brand-700">
                         {new Date(m.start_time).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
                       </div>
                       <button
@@ -298,7 +388,7 @@ export default function Dashboard() {
                         {m.location && <p className="truncate text-xs text-ink-700/50">{m.location}</p>}
                       </button>
                       {m.external_guests.length > 0 && (
-                        <span className="rounded-full bg-cream-100 px-2.5 py-1 text-xs text-ink-700/70">
+                        <span className="rounded-full bg-cream-100 px-2.5 py-1 text-xs font-medium text-ink-700/70">
                           {m.external_guests.length} guest{m.external_guests.length === 1 ? "" : "s"}
                         </span>
                       )}

@@ -159,7 +159,7 @@ class PushNotificationsTestCase(unittest.TestCase):
         """
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=True,
+            return_value=(True, None),
         ):
             return self._create_meeting(headers=headers)
 
@@ -182,7 +182,7 @@ class PushNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             self._create_meeting()
 
@@ -196,7 +196,7 @@ class PushNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             self._create_meeting()
 
@@ -252,7 +252,7 @@ class PushNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             resp = self.client.put(
                 f"/meetings/{meeting_id}",
@@ -272,7 +272,7 @@ class PushNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             resp = self.client.delete(
                 f"/meetings/{meeting_id}",
@@ -315,7 +315,7 @@ class PushNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             response = self.client.post(
                 "/push/test",
@@ -331,7 +331,7 @@ class PushNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=False,
+            return_value=(False, None),
         ):
             response = self.client.post(
                 "/push/test",
@@ -356,7 +356,7 @@ class PushNotificationsTestCase(unittest.TestCase):
 
         with patch(
             "app.services.push_notification_service.PushClient.send_notification",
-            return_value=True,
+            return_value=(True, None),
         ) as mock_send:
             meeting_id = self._create_meeting()
 

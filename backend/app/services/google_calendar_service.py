@@ -12,10 +12,27 @@ from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError, TransportError
 from googleapiclient.errors import HttpError
 from datetime import timezone
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@retry(
+    retry=retry_if_exception_type(TransportError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, max=4),
+    reraise=True,
+)
+def _refresh_with_retry(credentials: Credentials) -> None:
+    """
+    Retries only on TransportError (a network-level hiccup talking to
+    Google's token endpoint) - never on RefreshError, which means the
+    refresh token itself was rejected (revoked/expired access) and
+    retrying would just delay the same inevitable failure.
+    """
+    credentials.refresh(Request())
 
 
 class GoogleCalendarService:
@@ -283,7 +300,7 @@ class GoogleCalendarService:
             )
 
             try:
-                credentials.refresh(Request())
+                _refresh_with_retry(credentials)
             except (RefreshError, TransportError):
                 # Never log the exception object directly here - the
                 # underlying library can include request/response

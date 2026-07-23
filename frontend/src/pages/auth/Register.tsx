@@ -9,6 +9,7 @@ import { Input, Select } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/hooks/useAuth";
+import { authApi } from "@/api/auth";
 import { getApiErrorMessage } from "@/api/client";
 
 const schema = z.object({
@@ -53,16 +54,17 @@ export default function Register() {
 
       <form className="mt-6 space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-ink-700">Full name</label>
-          <Input placeholder="Maya Rodriguez" error={errors.name?.message} {...register("name")} />
+          <label htmlFor="name" className="mb-1.5 block text-sm font-medium text-ink-700">Full name</label>
+          <Input id="name" placeholder="Maya Rodriguez" error={errors.name?.message} {...register("name")} />
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-ink-700">Email</label>
-          <Input placeholder="name@company.com" error={errors.email?.message} {...register("email")} />
+          <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-ink-700">Email</label>
+          <Input id="email" placeholder="name@company.com" error={errors.email?.message} {...register("email")} />
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-ink-700">Password</label>
+          <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-ink-700">Password</label>
           <Input
+            id="password"
             type={showPassword ? "text" : "password"}
             placeholder="Min. 8 characters"
             error={errors.password?.message}
@@ -81,9 +83,9 @@ export default function Register() {
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-ink-700">Timezone</label>
+          <label htmlFor="timezone" className="mb-1.5 block text-sm font-medium text-ink-700">Timezone</label>
           <div className="relative">
-            <Select className="appearance-none pr-9" {...register("timezone")}>
+            <Select id="timezone" className="appearance-none pr-9" {...register("timezone")}>
               <option value="UTC">UTC</option>
               <option value="Asia/Kolkata">Asia/Kolkata (UTC+5:30)</option>
               <option value="America/New_York">America/New_York (UTC-5:00)</option>
@@ -95,6 +97,39 @@ export default function Register() {
 
         <Button type="submit" variant="dark" className="w-full" loading={isSubmitting}>
           Create account
+        </Button>
+
+        <div className="flex items-center gap-3 py-1">
+          <div className="h-px flex-1 bg-ink-700/15" />
+          <span className="text-xs text-ink-700/50">or</span>
+          <div className="h-px flex-1 bg-ink-700/15" />
+        </div>
+
+        <Button
+          type="button"
+          variant="secondary"
+          className="w-full border-transparent bg-white"
+          onClick={() => (window.location.href = authApi.googleLoginRedirectUrl())}
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24">
+            <path
+              fill="#4285F4"
+              d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.47c-.28 1.5-1.13 2.77-2.4 3.62v3.01h3.88c2.27-2.09 3.57-5.17 3.57-8.82z"
+            />
+            <path
+              fill="#34A853"
+              d="M12 24c3.24 0 5.96-1.07 7.95-2.91l-3.88-3.01c-1.08.72-2.45 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.96H1.27v3.11C3.25 21.3 7.31 24 12 24z"
+            />
+            <path
+              fill="#FBBC05"
+              d="M5.27 14.27a7.2 7.2 0 0 1 0-4.54V6.62H1.27a12 12 0 0 0 0 10.76l4-3.11z"
+            />
+            <path
+              fill="#EA4335"
+              d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0 7.31 0 3.25 2.7 1.27 6.62l4 3.11C6.22 6.86 8.87 4.75 12 4.75z"
+            />
+          </svg>
+          Continue with Google
         </Button>
 
         <p className="text-center text-sm text-ink-700/60">

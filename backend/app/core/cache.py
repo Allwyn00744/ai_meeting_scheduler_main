@@ -142,6 +142,25 @@ def cache_set(key: str, value: Any, ttl_seconds: int) -> None:
         )
 
 
+def redis_healthy() -> bool:
+    """
+    Used by GET /health/ready. Returns True only when Redis is both
+    configured and actually reachable right now - False (never an
+    exception) otherwise, including when REDIS_URL isn't set at all,
+    since that's a supported "caching disabled" configuration rather
+    than a failure (see the module docstring).
+    """
+    client = _get_client()
+
+    if client is None:
+        return False
+
+    try:
+        return bool(client.ping())
+    except Exception:
+        return False
+
+
 def cache_delete(*keys: str) -> None:
     """Best-effort deletion of one or more explicit keys."""
     if not keys:
@@ -213,3 +232,26 @@ def availability_list_key(user_id: int) -> str:
 
 def kpis_key(user_id: int) -> str:
     return f"{CACHE_NAMESPACE}:analytics:user:{user_id}:kpis"
+
+
+# Analytics Dashboard Extension: every /analytics/* endpoint besides
+# /kpis (overview, reschedule, cancellations, notifications,
+# integrations, resources, guests, insights) is keyed under this same
+# prefix, parameterized by the endpoint name and resolved date range.
+# One shared prefix means meeting create/update/cancel can invalidate
+# all of them in a single cache_delete_prefix call, the same way
+# meetings_list_prefix already does for the meetings list cache.
+ANALYTICS_TTL_SECONDS = 60
+
+
+def analytics_prefix(user_id: int) -> str:
+    return f"{CACHE_NAMESPACE}:analytics:user:{user_id}:"
+
+
+def analytics_key(
+    user_id: int,
+    section: str,
+    range_start: str,
+    range_end: str,
+) -> str:
+    return f"{analytics_prefix(user_id)}{section}:{range_start}:{range_end}"

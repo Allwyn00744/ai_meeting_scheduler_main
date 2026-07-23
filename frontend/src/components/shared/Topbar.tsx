@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Search, Bell, HelpCircle } from "lucide-react";
+import { Bell, Settings } from "lucide-react";
 import { Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Avatar } from "../ui/Avatar";
@@ -22,14 +22,6 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
         <Menu className="h-5 w-5" />
       </button>
 
-      <div className="relative hidden max-w-md flex-1 sm:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-        <input
-          className="h-10 w-full rounded-lg border-0 bg-white pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus-ring"
-          placeholder="Search meetings, documents, or insights..."
-        />
-      </div>
-
       <div className="flex flex-1 items-center justify-end gap-4">
         <div className="relative">
           <button
@@ -41,8 +33,8 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
           </button>
           <NotificationsPanel open={notifOpen} onClose={() => setNotifOpen(false)} />
         </div>
-        <button className="text-ink-700/70 hover:text-ink-700" onClick={() => navigate("/settings")} aria-label="Help">
-          <HelpCircle className="h-[19px] w-[19px]" />
+        <button className="text-ink-700/70 hover:text-ink-700" onClick={() => navigate("/settings")} aria-label="Settings">
+          <Settings className="h-[19px] w-[19px]" />
         </button>
         <div className="h-6 w-px bg-slate-200" />
         <button className="flex items-center gap-2.5" onClick={() => navigate("/settings")}>

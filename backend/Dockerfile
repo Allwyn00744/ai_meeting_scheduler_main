@@ -14,6 +14,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Runs as an unprivileged user rather than the container default
+# (root) - the app needs no elevated privileges (port 8000 isn't a
+# privileged port, and nothing here writes to the filesystem besides
+# Python's own bytecode cache, disabled above via
+# PYTHONDONTWRITEBYTECODE). /app is chown'd to this user since the
+# COPY above defaults to root ownership.
+RUN groupadd --system app && useradd --system --gid app --no-create-home app \
+    && chown -R app:app /app
+USER app
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \

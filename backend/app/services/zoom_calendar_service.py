@@ -5,6 +5,7 @@ import logging
 import requests
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.calendar.zoom_oauth import ZoomOAuthService
 from app.calendar.zoom_api import ZoomAPI
@@ -14,6 +15,24 @@ from app.repositories.zoom_credential_repository import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@retry(
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, max=4),
+    reraise=True,
+)
+def _refresh_access_token_with_retry(refresh_token: str) -> dict:
+    """
+    Retries only on a transport-level requests exception (the raw
+    HTTP call to Zoom's /oauth/token endpoint never completing) - a
+    completed exchange that came back with an error body is handled
+    separately below via the "error"/"access_token" dict check, since
+    _safe_json normalizes even a non-JSON error response into a dict
+    rather than raising.
+    """
+    return ZoomOAuthService.refresh_access_token(refresh_token)
 
 
 class ZoomCalendarService:
@@ -257,7 +276,7 @@ class ZoomCalendarService:
                 credential.user_id,
             )
 
-            token_response = ZoomOAuthService.refresh_access_token(
+            token_response = _refresh_access_token_with_retry(
                 credential.refresh_token,
             )
 

@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -66,4 +68,46 @@ class AuthService:
         return {
             "access_token": access_token,
             "token_type": "bearer"
+        }
+
+    @staticmethod
+    def login_or_register_via_google(
+        db: Session,
+        email: str,
+        name: str,
+    ) -> dict:
+        """
+        Used by GET /auth/google/callback once Google's id_token has
+        already been verified (see app/api/auth_routes.py) - email is
+        trusted as verified at that point. Finds the existing user by
+        email, or creates one on first sign-in. A Google-created user
+        still needs *some* value in hashed_password (NOT NULL, see
+        User model) even though they'll never use it to log in with a
+        password - a random, never-shared value via the same
+        hash_password() AuthService.register uses satisfies that
+        without a schema change or special-casing the column
+        elsewhere.
+        """
+        user = AuthRepository.get_user_by_email(db, email)
+
+        if user is None:
+            user = User(
+                name=name,
+                email=email,
+                hashed_password=hash_password(secrets.token_urlsafe(32)),
+                timezone="UTC",
+                oauth_provider="google",
+            )
+            user = AuthRepository.create_user(db, user)
+
+        access_token = create_access_token(
+            {
+                "user_id": user.id,
+                "email": user.email,
+            }
+        )
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
         }

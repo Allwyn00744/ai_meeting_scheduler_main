@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.auth.dependencies import get_current_user
 from app.models.user import User
 from app.services.email_service import EmailService
+from app.services.notification_log_service import NotificationLogService
 
 router = APIRouter(
     prefix="/email",
@@ -26,13 +27,27 @@ def send_test_email(
             subject="AI Meeting Scheduler",
             body="Congratulations! Your email service is working.",
         )
-    except Exception:
+    except Exception as exc:
+        NotificationLogService.try_record(
+            user_id=current_user.id,
+            channel="email",
+            event_type="test",
+            success=False,
+            error_detail=f"{type(exc).__name__}: {exc}",
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
                 "Failed to send test email. Check SMTP configuration."
             ),
         )
+
+    NotificationLogService.try_record(
+        user_id=current_user.id,
+        channel="email",
+        event_type="test",
+        success=True,
+    )
 
     return {
         "message": "Email sent successfully"

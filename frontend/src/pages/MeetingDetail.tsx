@@ -4,10 +4,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Pencil, Trash2, Clock, DoorOpen, Sparkles, Mail,
   TriangleAlert, ArrowRight, X, UserPlus, Loader2, ListChecks, Copy,
-  Lightbulb, Upload, Check, Video,
+  Lightbulb, Upload, Check, Video, Repeat,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
+import { meetingSeriesApi } from "@/api/meetingSeries";
 import { Avatar } from "@/components/ui/Avatar";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Dialog } from "@/components/ui/Dialog";
@@ -49,11 +50,24 @@ export default function MeetingDetail() {
   const [tab, setTab] = React.useState<(typeof TABS)[number]>("Details");
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
+  const [seriesEditOpen, setSeriesEditOpen] = React.useState(false);
+  const [seriesCancelOpen, setSeriesCancelOpen] = React.useState(false);
 
   const { data: meeting, isLoading, isError, error } = useQuery({
     queryKey: ["meeting", meetingId],
     queryFn: () => meetingsApi.getById(meetingId),
     enabled: Number.isFinite(meetingId),
+  });
+
+  const cancelSeriesFrom = useMutation({
+    mutationFn: () =>
+      meetingSeriesApi.cancelFrom(meeting!.series_id!, meeting!.series_sequence!),
+    onSuccess: (data) => {
+      push("success", `Cancelled ${data.cancelled_count} occurrence(s)`);
+      queryClient.invalidateQueries({ queryKey: ["meetings"] });
+      navigate("/dashboard");
+    },
+    onError: (err) => push("error", "Couldn't cancel the series", getApiErrorMessage(err)),
   });
 
   const { data: users } = useQuery({ queryKey: ["users"], queryFn: usersApi.list });
@@ -112,10 +126,26 @@ export default function MeetingDetail() {
           </div>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={meeting.status} />
+        {meeting.series_id !== null && (
+          <Badge variant="info">
+            <Repeat className="h-3 w-3" /> Recurring · #{(meeting.series_sequence ?? 0) + 1}
+          </Badge>
+        )}
         {owner && <span className="text-xs text-slate-400">Organized by {owner.name}</span>}
       </div>
+
+      {isOwner && meeting.series_id !== null && meeting.status !== "cancelled" && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setSeriesEditOpen(true)}>
+            <Pencil className="h-3.5 w-3.5" /> Edit this & following
+          </Button>
+          <Button variant="danger" size="sm" onClick={() => setSeriesCancelOpen(true)}>
+            <Trash2 className="h-3.5 w-3.5" /> Cancel this & following
+          </Button>
+        </div>
+      )}
 
       {meeting.status !== "cancelled" && (
         <button
@@ -257,7 +287,98 @@ export default function MeetingDetail() {
       />
 
       <EditMeetingDialog open={editOpen} onClose={() => setEditOpen(false)} meeting={meeting} />
+
+      {meeting.series_id !== null && (
+        <>
+          <ConfirmDialog
+            open={seriesCancelOpen}
+            onClose={() => setSeriesCancelOpen(false)}
+            onConfirm={() => {
+              setSeriesCancelOpen(false);
+              cancelSeriesFrom.mutate();
+            }}
+            title="Cancel this and every following occurrence?"
+            description="This cancels this meeting and every later occurrence in the series. Earlier occurrences are not affected."
+            confirmLabel="Cancel occurrences"
+            loading={cancelSeriesFrom.isPending}
+          />
+          <EditSeriesDialog
+            open={seriesEditOpen}
+            onClose={() => setSeriesEditOpen(false)}
+            seriesId={meeting.series_id}
+            fromSequence={meeting.series_sequence ?? 0}
+            meetingId={meeting.id}
+          />
+        </>
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function EditSeriesDialog({
+  open,
+  onClose,
+  seriesId,
+  fromSequence,
+  meetingId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  seriesId: number;
+  fromSequence: number;
+  meetingId: number;
+}) {
+  const { push } = useToast();
+  const queryClient = useQueryClient();
+  const [title, setTitle] = React.useState("");
+  const [timeShiftMinutes, setTimeShiftMinutes] = React.useState("0");
+
+  const save = useMutation({
+    mutationFn: () =>
+      meetingSeriesApi.updateFrom(seriesId, fromSequence, {
+        ...(title.trim() ? { title: title.trim() } : {}),
+        ...(Number(timeShiftMinutes) ? { time_shift_minutes: Number(timeShiftMinutes) } : {}),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["meeting", meetingId] });
+      queryClient.invalidateQueries({ queryKey: ["meetings"] });
+      push("success", "Series updated");
+      onClose();
+    },
+    onError: (err) => push("error", "Couldn't update the series", getApiErrorMessage(err)),
+  });
+
+  return (
+    <Dialog open={open} onClose={onClose} title="Edit this and following occurrences">
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">New title (optional)</label>
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Leave blank to keep the current title" />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">Shift time by (minutes)</label>
+          <Input
+            type="number"
+            value={timeShiftMinutes}
+            onChange={(e) => setTimeShiftMinutes(e.target.value)}
+            placeholder="e.g. 60 to move an hour later, -30 to move earlier"
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            Every selected occurrence keeps its own date and moves by this many minutes.
+          </p>
+        </div>
+        <Button
+          className="w-full"
+          onClick={() => save.mutate()}
+          loading={save.isPending}
+          disabled={!title.trim() && !Number(timeShiftMinutes)}
+        >
+          Save changes
+        </Button>
+      </div>
+    </Dialog>
   );
 }
 

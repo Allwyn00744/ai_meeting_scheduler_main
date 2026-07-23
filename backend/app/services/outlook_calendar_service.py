@@ -5,6 +5,7 @@ import logging
 import requests
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.calendar.microsoft_oauth import MicrosoftOAuthService
 from app.calendar.outlook_calendar import OutlookCalendarAPI
@@ -14,6 +15,23 @@ from app.repositories.outlook_credential_repository import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@retry(
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, max=4),
+    reraise=True,
+)
+def _refresh_access_token_with_retry(refresh_token: str) -> dict:
+    """
+    Retries only on a transport-level requests exception (MSAL's HTTP
+    call to Microsoft's token endpoint never completing) - not on a
+    completed exchange that came back with an {"error": ...} body,
+    which MSAL returns as a normal dict rather than raising and means
+    the refresh token itself was rejected, not a transient failure.
+    """
+    return MicrosoftOAuthService.refresh_access_token(refresh_token)
 
 
 class OutlookCalendarService:
@@ -265,7 +283,7 @@ class OutlookCalendarService:
                 credential.user_id,
             )
 
-            token_response = MicrosoftOAuthService.refresh_access_token(
+            token_response = _refresh_access_token_with_retry(
                 credential.refresh_token,
             )
 

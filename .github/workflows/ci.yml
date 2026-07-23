@@ -110,7 +110,7 @@ jobs:
 
       - name: Run backend tests
         working-directory: backend
-        run: python -m unittest tests.test_redis_cache -v
+        run: python -m unittest discover -s tests -p "test_*.py" -v
 
       - name: Redis service smoke test
         working-directory: backend

@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
+  BarChart3,
   Sparkles,
   FolderClosed,
   Clock,
@@ -16,6 +17,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 const MAIN_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/ai-assistant", label: "AI assistant", icon: Sparkles },
 ];
 

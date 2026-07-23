@@ -1,0 +1,199 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U ci_user -d ci_db"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=10s
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=5s
+
+    # CI-only placeholders. Never real credentials - external services
+    # (Google OAuth, SMTP, Gemini) are never called by these checks.
+    env:
+      DATABASE_URL: postgresql+psycopg2://ci_user:ci_password@localhost:5432/ci_db
+      SQLALCHEMY_ECHO: "false"
+      EMAIL_HOST: smtp.example.invalid
+      EMAIL_PORT: "587"
+      EMAIL_USERNAME: ci-placeholder-username
+      EMAIL_PASSWORD: ci-placeholder-password
+      EMAIL_FROM: ci@example.invalid
+      EMAIL_USE_SSL: "false"
+      EMAIL_TIMEOUT_SECONDS: "10"
+      GOOGLE_CLIENT_ID: ci-placeholder-client-id
+      GOOGLE_CLIENT_SECRET: ci-placeholder-client-secret
+      GOOGLE_REDIRECT_URI: http://localhost:8000/google/callback
+      FRONTEND_URL: http://localhost:5173
+      SECRET_KEY: ci-placeholder-secret-key-not-for-production-use
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      CORS_ORIGINS: http://localhost:3000
+      DEFAULT_PAGE_SIZE: "50"
+      MAX_PAGE_SIZE: "200"
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify exactly one Alembic head
+        working-directory: backend
+        run: |
+          HEADS_OUTPUT=$(alembic heads)
+          echo "$HEADS_OUTPUT"
+          HEAD_COUNT=$(echo "$HEADS_OUTPUT" | grep -c '(head)')
+          if [ "$HEAD_COUNT" -ne 1 ]; then
+            echo "Expected exactly one Alembic head, found $HEAD_COUNT"
+            exit 1
+          fi
+
+      - name: Run Alembic migrations against PostgreSQL
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Python compile check
+        working-directory: backend
+        run: python -m compileall app
+
+      - name: Import FastAPI application
+        working-directory: backend
+        run: python -c "from app.main import app; print('FastAPI app import OK')"
+
+      - name: Run backend tests
+        working-directory: backend
+        run: python -m unittest tests.test_redis_cache -v
+
+      - name: Redis service smoke test
+        working-directory: backend
+        run: |
+          python -c "
+          import os
+          import redis
+          client = redis.Redis.from_url(os.environ['REDIS_URL'], protocol=2)
+          assert client.ping() is True
+          client.set('ci-smoke-check', 'ok')
+          assert client.get('ci-smoke-check') == b'ok'
+          client.delete('ci-smoke-check')
+          print('Redis service smoke test OK')
+          "
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Match npm version to lockfile (see frontend/Dockerfile)
+        run: npm install -g npm@11
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_URL: http://localhost:8000
+        run: npm run build
+
+      - name: TypeScript project check
+        working-directory: frontend
+        run: npx tsc -b --force
+
+  docker-validate:
+    name: Docker Compose Config
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write CI-only placeholder backend/.env
+        run: |
+          cat > backend/.env <<'EOF'
+          DATABASE_URL=postgresql+psycopg2://ci_user:ci_password@postgres:5432/ci_db
+          EMAIL_HOST=smtp.example.invalid
+          EMAIL_PORT=587
+          EMAIL_USERNAME=ci-placeholder-username
+          EMAIL_PASSWORD=ci-placeholder-password
+          EMAIL_FROM=ci@example.invalid
+          GOOGLE_CLIENT_ID=ci-placeholder-client-id
+          GOOGLE_CLIENT_SECRET=ci-placeholder-client-secret
+          GOOGLE_REDIRECT_URI=http://localhost:8000/google/callback
+          FRONTEND_URL=http://localhost:5173
+          SECRET_KEY=ci-placeholder-secret-key-not-for-production-use
+          CORS_ORIGINS=http://localhost:3000
+          EOF
+
+      - name: Validate docker compose config
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_db
+          POSTGRES_PORT: "5432"
+          BACKEND_PORT: "8000"
+          FRONTEND_PORT: "5173"
+          CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+          FRONTEND_URL: http://localhost:5173
+          VITE_API_URL: http://localhost:8000
+        run: docker compose config

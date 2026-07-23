@@ -11,8 +11,15 @@ from app.repositories.whatsapp_settings_repository import (
     WhatsAppSettingsRepository,
 )
 from app.schemas.whatsapp import WhatsAppSettingsUpdate
+from app.services.notification_log_service import NotificationLogService
 
 logger = logging.getLogger(__name__)
+
+_EVENT_TYPE_BY_LABEL = {
+    "Created": "created",
+    "Updated": "updated",
+    "Cancelled": "cancelled",
+}
 
 
 class WhatsAppNotificationService:
@@ -138,19 +145,36 @@ class WhatsAppNotificationService:
             return False
 
         try:
-            return WhatsAppClient.send_text_message(
+            sent, detail = WhatsAppClient.send_text_message(
                 phone_number=settings_row.phone_number,
                 message=WhatsAppNotificationService._build_message(
                     event_label,
                     meeting,
                 ),
             )
-        except Exception:
+            NotificationLogService.try_record(
+                user_id=meeting.owner_id,
+                channel="whatsapp",
+                event_type=_EVENT_TYPE_BY_LABEL[event_label],
+                success=sent,
+                meeting_id=meeting.id,
+                error_detail=None if sent else detail,
+            )
+            return sent
+        except Exception as exc:
             logger.exception(
                 "Failed to send WhatsApp notification. meeting_id=%s "
                 "event=%s",
                 meeting.id,
                 event_label,
+            )
+            NotificationLogService.try_record(
+                user_id=meeting.owner_id,
+                channel="whatsapp",
+                event_type=_EVENT_TYPE_BY_LABEL[event_label],
+                success=False,
+                meeting_id=meeting.id,
+                error_detail=f"{type(exc).__name__}: {exc}",
             )
             return False
 
@@ -206,7 +230,7 @@ class WhatsAppNotificationService:
             meeting,
         )
 
-        sent = WhatsAppClient.send_text_message(
+        sent, error_detail = WhatsAppClient.send_text_message(
             phone_number=settings_row.phone_number,
             message=message,
         )
@@ -214,7 +238,7 @@ class WhatsAppNotificationService:
         if not sent:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to send the WhatsApp notification.",
+                detail=error_detail or "Failed to send the WhatsApp notification.",
             )
 
     @staticmethod
@@ -236,15 +260,23 @@ class WhatsAppNotificationService:
                 detail="WhatsApp phone number is not configured.",
             )
 
-        sent = WhatsAppClient.send_text_message(
+        sent, error_detail = WhatsAppClient.send_text_message(
             phone_number=settings_row.phone_number,
             message=(
                 "This is a test notification from AI Meeting Scheduler."
             ),
         )
 
+        NotificationLogService.try_record(
+            user_id=user_id,
+            channel="whatsapp",
+            event_type="test",
+            success=sent,
+            error_detail=None if sent else error_detail,
+        )
+
         if not sent:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to send the WhatsApp test notification.",
+                detail=error_detail or "Failed to send the WhatsApp test notification.",
             )

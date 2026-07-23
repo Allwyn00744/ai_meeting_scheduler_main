@@ -3,8 +3,10 @@ import { AppLayout } from "@/components/layouts/AppLayout";
 
 import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
+import GoogleCallback from "@/pages/auth/GoogleCallback";
 
 import Dashboard from "@/pages/Dashboard";
+import Analytics from "@/pages/Analytics";
 import AIAssistant from "@/pages/AIAssistant";
 import Resources from "@/pages/Resources";
 import Availability from "@/pages/Availability";
@@ -23,10 +25,12 @@ export default function App() {
       {/* Auth (public) */}
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/auth/google/callback" element={<GoogleCallback />} />
 
       {/* Authenticated app shell — AppLayout itself redirects to /login when unauthenticated */}
       <Route element={<AppLayout />}>
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/analytics" element={<Analytics />} />
         <Route path="/ai-assistant" element={<AIAssistant />} />
         <Route path="/resources" element={<Resources />} />
         <Route path="/availability" element={<Availability />} />

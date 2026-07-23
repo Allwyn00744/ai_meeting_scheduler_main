@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Sidebar, SidebarContent } from "../shared/Sidebar";
 import { Topbar } from "../shared/Topbar";
 import { useAuth } from "@/hooks/useAuth";
+import { useMeetingSocket } from "@/hooks/useMeetingSocket";
 import { Logo } from "../shared/Logo";
 
 function FullPageLoader() {
@@ -27,6 +28,7 @@ function FullPageLoader() {
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const { user, loading } = useAuth();
+  useMeetingSocket(Boolean(user));
 
   if (loading) return <FullPageLoader />;
   if (!user) return <Navigate to="/login" replace />;

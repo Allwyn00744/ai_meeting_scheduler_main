@@ -9,6 +9,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (payload: LoginPayload) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
+  loginWithToken: (token: string) => Promise<void>;
   logout: () => void;
   refetchUser: () => Promise<void>;
 }
@@ -56,6 +57,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await login({ email: payload.email, password: payload.password });
   };
 
+  /** Used by GoogleCallback.tsx - the token already exists (issued by GET /auth/google/callback), this just stores it and loads the user, mirroring the tail end of login() above. */
+  const loginWithToken = async (token: string) => {
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    const me = await authApi.me();
+    setUser(me);
+  };
+
   const logout = () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setUser(null);
@@ -63,7 +71,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refetchUser: loadUser }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, loginWithToken, logout, refetchUser: loadUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -2,9 +2,60 @@ import logging
 import smtplib
 from email.message import EmailMessage
 
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Transport-level failures only (can't connect, connection dropped
+# mid-handshake, timed out) - never smtplib.SMTPAuthenticationError or
+# SMTPRecipientsRefused, which mean the credentials or recipient are
+# actually rejected and retrying would just delay the same inevitable
+# failure. Mirrors GoogleCalendarService._refresh_with_retry.
+_TRANSIENT_SMTP_ERRORS = (
+    smtplib.SMTPConnectError,
+    smtplib.SMTPServerDisconnected,
+    TimeoutError,
+    ConnectionError,
+)
+
+
+@retry(
+    retry=retry_if_exception_type(_TRANSIENT_SMTP_ERRORS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, max=4),
+    reraise=True,
+)
+def _send_smtp_with_retry(message: EmailMessage) -> None:
+    if settings.EMAIL_USE_SSL:
+        with smtplib.SMTP_SSL(
+            settings.EMAIL_HOST,
+            settings.EMAIL_PORT,
+            timeout=settings.EMAIL_TIMEOUT_SECONDS,
+        ) as smtp:
+            smtp.login(
+                settings.EMAIL_USERNAME,
+                settings.EMAIL_PASSWORD,
+            )
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(
+            settings.EMAIL_HOST,
+            settings.EMAIL_PORT,
+            timeout=settings.EMAIL_TIMEOUT_SECONDS,
+        ) as smtp:
+            smtp.starttls()
+            smtp.login(
+                settings.EMAIL_USERNAME,
+                settings.EMAIL_PASSWORD,
+            )
+            smtp.send_message(message)
 
 
 class EmailService:
@@ -24,6 +75,8 @@ class EmailService:
         which always called starttls() unconditionally and would
         raise on a port-465 SSL-only server.
 
+        Retries up to 3 times (with exponential backoff) on a
+        transport-level failure only - see _send_smtp_with_retry.
         Raises the underlying smtplib/OSError exception on failure.
         Callers that trigger email as a side effect of an otherwise
         successful operation (e.g. scheduling a meeting) are
@@ -39,29 +92,7 @@ class EmailService:
 
         message.set_content(body)
 
-        if settings.EMAIL_USE_SSL:
-            with smtplib.SMTP_SSL(
-                settings.EMAIL_HOST,
-                settings.EMAIL_PORT,
-                timeout=settings.EMAIL_TIMEOUT_SECONDS,
-            ) as smtp:
-                smtp.login(
-                    settings.EMAIL_USERNAME,
-                    settings.EMAIL_PASSWORD,
-                )
-                smtp.send_message(message)
-        else:
-            with smtplib.SMTP(
-                settings.EMAIL_HOST,
-                settings.EMAIL_PORT,
-                timeout=settings.EMAIL_TIMEOUT_SECONDS,
-            ) as smtp:
-                smtp.starttls()
-                smtp.login(
-                    settings.EMAIL_USERNAME,
-                    settings.EMAIL_PASSWORD,
-                )
-                smtp.send_message(message)
+        _send_smtp_with_retry(message)
 
     @staticmethod
     def send_meeting_invitation(

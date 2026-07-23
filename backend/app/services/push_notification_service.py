@@ -10,8 +10,15 @@ from app.repositories.push_subscription_repository import (
     PushSubscriptionRepository,
 )
 from app.schemas.push import PushSubscribeRequest
+from app.services.notification_log_service import NotificationLogService
 
 logger = logging.getLogger(__name__)
+
+_EVENT_TYPE_BY_LABEL = {
+    "Created": "created",
+    "Updated": "updated",
+    "Cancelled": "cancelled",
+}
 
 
 class PushNotificationService:
@@ -129,13 +136,35 @@ class PushNotificationService:
         every enabled subscription for the owner; returns True if at
         least one delivery succeeded.
         """
+        logger.info(
+            "Push recipients: selecting owner as push recipient. "
+            "meeting_id=%s event=%s owner_id=%s",
+            meeting.id,
+            event_label,
+            meeting.owner_id,
+        )
+
         subscriptions = PushSubscriptionRepository.get_enabled_by_user_id(
             db,
             meeting.owner_id,
         )
 
         if not subscriptions:
+            logger.info(
+                "Push subscription: none found for owner_id=%s "
+                "meeting_id=%s - nothing to send.",
+                meeting.owner_id,
+                meeting.id,
+            )
             return False
+
+        logger.info(
+            "Push subscription: found %s enabled subscription(s) for "
+            "owner_id=%s meeting_id=%s.",
+            len(subscriptions),
+            meeting.owner_id,
+            meeting.id,
+        )
 
         title, body = PushNotificationService._build_payload(
             event_label,
@@ -144,22 +173,63 @@ class PushNotificationService:
 
         sent_any = False
         for subscription_row in subscriptions:
+            logger.info(
+                "Push send: sending to subscription_id=%s "
+                "meeting_id=%s event=%s.",
+                subscription_row.id,
+                meeting.id,
+                event_label,
+            )
             try:
-                if PushClient.send_notification(
+                sent, detail = PushClient.send_notification(
                     endpoint=subscription_row.endpoint,
                     p256dh_key=subscription_row.p256dh_key,
                     auth_key=subscription_row.auth_key,
                     title=title,
                     body=body,
-                ):
+                )
+                if sent:
+                    logger.info(
+                        "Push send: succeeded for subscription_id=%s "
+                        "meeting_id=%s event=%s.",
+                        subscription_row.id,
+                        meeting.id,
+                        event_label,
+                    )
+                else:
+                    logger.warning(
+                        "Push send: failed for subscription_id=%s "
+                        "meeting_id=%s event=%s detail=%s",
+                        subscription_row.id,
+                        meeting.id,
+                        event_label,
+                        detail,
+                    )
+                NotificationLogService.try_record(
+                    user_id=meeting.owner_id,
+                    channel="push",
+                    event_type=_EVENT_TYPE_BY_LABEL[event_label],
+                    success=sent,
+                    meeting_id=meeting.id,
+                    error_detail=None if sent else detail,
+                )
+                if sent:
                     sent_any = True
-            except Exception:
+            except Exception as exc:
                 logger.exception(
-                    "Failed to send push notification. meeting_id=%s "
-                    "event=%s subscription_id=%s",
+                    "Push send: unhandled exception for "
+                    "subscription_id=%s meeting_id=%s event=%s.",
+                    subscription_row.id,
                     meeting.id,
                     event_label,
-                    subscription_row.id,
+                )
+                NotificationLogService.try_record(
+                    user_id=meeting.owner_id,
+                    channel="push",
+                    event_type=_EVENT_TYPE_BY_LABEL[event_label],
+                    success=False,
+                    meeting_id=meeting.id,
+                    error_detail=f"{type(exc).__name__}: {exc}",
                 )
 
         return sent_any
@@ -212,18 +282,29 @@ class PushNotificationService:
             )
 
         sent_any = False
+        last_error: str | None = None
         for subscription_row in subscriptions:
-            if PushClient.send_notification(
+            sent, error_detail = PushClient.send_notification(
                 endpoint=subscription_row.endpoint,
                 p256dh_key=subscription_row.p256dh_key,
                 auth_key=subscription_row.auth_key,
                 title="Test Notification",
                 body="This is a test notification from AI Meeting Scheduler.",
-            ):
+            )
+            NotificationLogService.try_record(
+                user_id=user_id,
+                channel="push",
+                event_type="test",
+                success=sent,
+                error_detail=None if sent else error_detail,
+            )
+            if sent:
                 sent_any = True
+            else:
+                last_error = error_detail
 
         if not sent_any:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to send the push test notification.",
+                detail=last_error or "Failed to send the push test notification.",
             )

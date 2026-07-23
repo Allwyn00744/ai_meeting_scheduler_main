@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/hooks/useAuth";
+import { authApi } from "@/api/auth";
 import { getApiErrorMessage } from "@/api/client";
 
 const schema = z.object({
@@ -48,8 +49,9 @@ export default function Login() {
 
       <form className="mt-6 space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-ink-700">Email</label>
+          <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-ink-700">Email</label>
           <Input
+            id="email"
             icon={<Mail className="h-4 w-4" />}
             placeholder="name@company.com"
             error={errors.email?.message}
@@ -58,7 +60,7 @@ export default function Login() {
         </div>
         <div>
           <div className="mb-1.5 flex items-center justify-between">
-            <label className="text-sm font-medium text-ink-700">Password</label>
+            <label htmlFor="password" className="text-sm font-medium text-ink-700">Password</label>
             <button
               type="button"
               onClick={() => push("info", "Password reset isn't available yet", "Contact your workspace admin to reset your password.")}
@@ -68,6 +70,7 @@ export default function Login() {
             </button>
           </div>
           <Input
+            id="password"
             icon={<Lock className="h-4 w-4" />}
             type={showPassword ? "text" : "password"}
             placeholder="Enter your password"
@@ -101,7 +104,7 @@ export default function Login() {
           type="button"
           variant="secondary"
           className="w-full border-transparent bg-white"
-          onClick={() => push("info", "Google sign-in isn't set up yet", "Use your email and password to sign in for now.")}
+          onClick={() => (window.location.href = authApi.googleLoginRedirectUrl())}
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24">
             <path
